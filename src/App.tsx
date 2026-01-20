@@ -15,6 +15,7 @@ import BackupAutomation from "./pages/BackupAutomation";
 import ChatOps from "./pages/ChatOps";
 import MonitoringAgent from "./pages/MonitoringAgent";
 import Alerts from "./pages/Alerts";
+import LogViewerPage from "./pages/LogViewer";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -38,6 +39,7 @@ const App = () => (
             <Route path="/chatops" element={<ChatOps />} />
             <Route path="/monitoring-agent" element={<MonitoringAgent />} />
             <Route path="/alerts" element={<Alerts />} />
+            <Route path="/logs" element={<LogViewerPage />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>

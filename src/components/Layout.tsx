@@ -13,6 +13,7 @@ import {
   LayoutDashboard,
   Radio,
   Bell,
+  FileText,
 } from "lucide-react";
 
 interface LayoutProps {
@@ -31,6 +32,7 @@ const navItems = [
   { path: "/chatops", icon: MessageSquare, label: "ChatOps" },
   { path: "/monitoring-agent", icon: Radio, label: "Monitoring Agent" },
   { path: "/alerts", icon: Bell, label: "Alerting" },
+  { path: "/logs", icon: FileText, label: "Log Viewer" },
 ];
 
 export default function Layout({ children }: LayoutProps) {
