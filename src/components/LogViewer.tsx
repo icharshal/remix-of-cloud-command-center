@@ -22,8 +22,17 @@ import {
   Play,
   Pause,
   ArrowDown,
-  Radio
+  Radio,
+  Download,
+  FileJson,
+  FileSpreadsheet
 } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { format } from "date-fns";
 
 interface CollectedLog {
@@ -323,6 +332,66 @@ export default function LogViewer() {
     });
   }, [logs, searchQuery, severityFilter, namespaceFilter, podFilter]);
 
+  // Export to JSON
+  const exportToJSON = useCallback(() => {
+    const exportData = filteredLogs.map(log => ({
+      timestamp: log.timestamp,
+      level: log.log_level,
+      namespace: log.namespace,
+      pod: log.pod_name,
+      container: log.container_name,
+      message: log.message,
+      source: log.source,
+      agent_id: log.agent_id,
+    }));
+
+    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `logs-export-${format(new Date(), 'yyyy-MM-dd-HHmmss')}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [filteredLogs]);
+
+  // Export to CSV
+  const exportToCSV = useCallback(() => {
+    const headers = ['Timestamp', 'Level', 'Namespace', 'Pod', 'Container', 'Message', 'Source', 'Agent ID'];
+    
+    const escapeCSV = (value: string | null | undefined) => {
+      if (value === null || value === undefined) return '';
+      const str = String(value);
+      if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const rows = filteredLogs.map(log => [
+      escapeCSV(log.timestamp),
+      escapeCSV(log.log_level),
+      escapeCSV(log.namespace),
+      escapeCSV(log.pod_name),
+      escapeCSV(log.container_name),
+      escapeCSV(log.message),
+      escapeCSV(log.source),
+      escapeCSV(log.agent_id),
+    ].join(','));
+
+    const csvContent = [headers.join(','), ...rows].join('\n');
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `logs-export-${format(new Date(), 'yyyy-MM-dd-HHmmss')}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [filteredLogs]);
+
   // Stats
   const stats = useMemo(() => {
     const errorCount = filteredLogs.filter(l => l.log_level?.toUpperCase() === "ERROR").length;
@@ -375,6 +444,24 @@ export default function LogViewer() {
               </>
             )}
           </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" className="gap-2" disabled={filteredLogs.length === 0}>
+                <Download className="h-4 w-4" />
+                Export
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onClick={exportToJSON} className="gap-2 cursor-pointer">
+                <FileJson className="h-4 w-4" />
+                Export as JSON
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={exportToCSV} className="gap-2 cursor-pointer">
+                <FileSpreadsheet className="h-4 w-4" />
+                Export as CSV
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
           <Button variant="outline" className="gap-2" onClick={handleRefresh} disabled={isRefreshing}>
             {isRefreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Refresh
