@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,7 +18,11 @@ import {
   Info,
   Bug,
   Terminal,
-  X
+  X,
+  Play,
+  Pause,
+  ArrowDown,
+  Radio
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -185,6 +189,12 @@ export default function LogViewer() {
   const [podFilter, setPodFilter] = useState<string>("all");
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
+  const [isStreaming, setIsStreaming] = useState(true);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [realtimeConnected, setRealtimeConnected] = useState(false);
+  const [newLogsCount, setNewLogsCount] = useState(0);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const logsContainerRef = useRef<HTMLDivElement>(null);
 
   const { data: logs = [], refetch, isLoading } = useQuery({
     queryKey: ['log-viewer-logs'],
@@ -199,10 +209,78 @@ export default function LogViewer() {
     },
   });
 
+  // Scroll to top (newest logs)
+  const scrollToTop = useCallback(() => {
+    if (logsContainerRef.current) {
+      logsContainerRef.current.scrollTop = 0;
+    }
+  }, []);
+
+  // Set up realtime subscription
+  useEffect(() => {
+    if (!isStreaming) {
+      setRealtimeConnected(false);
+      return;
+    }
+
+    const channel = supabase
+      .channel('log-viewer-realtime')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'collected_logs' },
+        () => {
+          refetch();
+          if (autoScroll) {
+            // Small delay to allow the new data to render
+            setTimeout(scrollToTop, 100);
+          } else {
+            setNewLogsCount((prev) => prev + 1);
+          }
+        }
+      )
+      .subscribe((status) => {
+        setRealtimeConnected(status === 'SUBSCRIBED');
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [isStreaming, autoScroll, refetch, scrollToTop]);
+
+  // Handle scroll events to detect if user scrolled away
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLDivElement;
+    const isAtTop = target.scrollTop < 50;
+    if (isAtTop && newLogsCount > 0) {
+      setNewLogsCount(0);
+    }
+    // If user scrolls away from top, disable auto-scroll
+    if (!isAtTop && autoScroll) {
+      setAutoScroll(false);
+    }
+  }, [autoScroll, newLogsCount]);
+
+  const handleScrollToNew = () => {
+    scrollToTop();
+    setNewLogsCount(0);
+    setAutoScroll(true);
+  };
+
+  const toggleStreaming = () => {
+    setIsStreaming(!isStreaming);
+    if (!isStreaming) {
+      setAutoScroll(true);
+      setNewLogsCount(0);
+    }
+  };
+
   const handleRefresh = async () => {
     setIsRefreshing(true);
     await refetch();
     setIsRefreshing(false);
+    if (autoScroll) {
+      scrollToTop();
+    }
   };
 
   const clearFilters = () => {
@@ -262,14 +340,46 @@ export default function LogViewer() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-foreground">Log Viewer</h1>
-          <p className="text-muted-foreground">
-            Search and analyze logs from your Kubernetes clusters
-          </p>
+          <div className="flex items-center gap-3 mt-1">
+            <p className="text-muted-foreground">
+              Search and analyze logs from your Kubernetes clusters
+            </p>
+            <Badge 
+              variant={realtimeConnected && isStreaming ? "default" : "secondary"} 
+              className="gap-1"
+            >
+              <span className={`h-2 w-2 rounded-full ${
+                realtimeConnected && isStreaming 
+                  ? 'bg-green-500 animate-pulse' 
+                  : 'bg-muted-foreground'
+              }`} />
+              {isStreaming ? (realtimeConnected ? 'Live' : 'Connecting...') : 'Paused'}
+            </Badge>
+          </div>
         </div>
-        <Button variant="outline" className="gap-2" onClick={handleRefresh} disabled={isRefreshing}>
-          {isRefreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button 
+            variant={isStreaming ? "default" : "outline"} 
+            className="gap-2" 
+            onClick={toggleStreaming}
+          >
+            {isStreaming ? (
+              <>
+                <Pause className="h-4 w-4" />
+                Pause
+              </>
+            ) : (
+              <>
+                <Play className="h-4 w-4" />
+                Resume
+              </>
+            )}
+          </Button>
+          <Button variant="outline" className="gap-2" onClick={handleRefresh} disabled={isRefreshing}>
+            {isRefreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            Refresh
+          </Button>
+        </div>
       </div>
 
       {/* Stats Cards */}
@@ -392,18 +502,59 @@ export default function LogViewer() {
       {/* Logs List */}
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <FileText className="h-5 w-5" />
-            Logs
-            <Badge variant="secondary" className="ml-2">
-              {filteredLogs.length} of {logs.length}
-            </Badge>
-          </CardTitle>
-          <CardDescription>
-            Click on a log entry to expand details
-          </CardDescription>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                Logs
+                <Badge variant="secondary" className="ml-2">
+                  {filteredLogs.length} of {logs.length}
+                </Badge>
+                {isStreaming && realtimeConnected && (
+                  <Badge variant="outline" className="ml-2 gap-1 text-accent border-accent/30">
+                    <Radio className="h-3 w-3 animate-pulse" />
+                    Streaming
+                  </Badge>
+                )}
+              </CardTitle>
+              <CardDescription>
+                Click on a log entry to expand details
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant={autoScroll ? "default" : "outline"}
+                size="sm"
+                className="gap-2"
+                onClick={() => {
+                  setAutoScroll(!autoScroll);
+                  if (!autoScroll) {
+                    scrollToTop();
+                    setNewLogsCount(0);
+                  }
+                }}
+              >
+                <ArrowDown className={`h-4 w-4 ${autoScroll ? '' : 'opacity-50'}`} />
+                Auto-scroll {autoScroll ? 'On' : 'Off'}
+              </Button>
+            </div>
+          </div>
         </CardHeader>
-        <CardContent>
+        <CardContent className="relative">
+          {/* New logs indicator */}
+          {newLogsCount > 0 && (
+            <div className="absolute top-0 left-1/2 -translate-x-1/2 z-10">
+              <Button
+                onClick={handleScrollToNew}
+                className="gap-2 shadow-lg animate-bounce"
+                size="sm"
+              >
+                <ArrowDown className="h-4 w-4 rotate-180" />
+                {newLogsCount} new log{newLogsCount > 1 ? 's' : ''}
+              </Button>
+            </div>
+          )}
+          
           {isLoading ? (
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -419,7 +570,11 @@ export default function LogViewer() {
               </p>
             </div>
           ) : (
-            <ScrollArea className="h-[600px] rounded-md border bg-card">
+            <div 
+              ref={logsContainerRef}
+              className="h-[600px] rounded-md border bg-card overflow-auto"
+              onScroll={handleScroll}
+            >
               <div className="font-mono text-sm">
                 {filteredLogs.map((log) => {
                   const levelConfig = getLogLevelConfig(log.log_level);
@@ -506,7 +661,7 @@ export default function LogViewer() {
                   );
                 })}
               </div>
-            </ScrollArea>
+            </div>
           )}
         </CardContent>
       </Card>
