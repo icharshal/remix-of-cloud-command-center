@@ -278,6 +278,110 @@ export type Database = {
         }
         Relationships: []
       }
+      jira_automation_settings: {
+        Row: {
+          created_at: string
+          due_days: number
+          enabled: boolean
+          id: string
+          issue_type: string
+          jira_base_url: string | null
+          jira_project_key: string | null
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          due_days?: number
+          enabled?: boolean
+          id?: string
+          issue_type?: string
+          jira_base_url?: string | null
+          jira_project_key?: string | null
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          due_days?: number
+          enabled?: boolean
+          id?: string
+          issue_type?: string
+          jira_base_url?: string | null
+          jira_project_key?: string | null
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      jira_resource_tickets: {
+        Row: {
+          created_at: string
+          creator_email: string | null
+          creator_name: string | null
+          due_date: string
+          error_message: string | null
+          id: string
+          issue_type: string | null
+          jira_issue_key: string | null
+          jira_issue_url: string | null
+          jira_project_key: string | null
+          metadata: Json
+          provider: string
+          resource_name: string
+          resource_type: string
+          source_log_id: string | null
+          status: string
+          summary: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          creator_email?: string | null
+          creator_name?: string | null
+          due_date: string
+          error_message?: string | null
+          id?: string
+          issue_type?: string | null
+          jira_issue_key?: string | null
+          jira_issue_url?: string | null
+          jira_project_key?: string | null
+          metadata?: Json
+          provider?: string
+          resource_name: string
+          resource_type: string
+          source_log_id?: string | null
+          status?: string
+          summary: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          creator_email?: string | null
+          creator_name?: string | null
+          due_date?: string
+          error_message?: string | null
+          id?: string
+          issue_type?: string | null
+          jira_issue_key?: string | null
+          jira_issue_url?: string | null
+          jira_project_key?: string | null
+          metadata?: Json
+          provider?: string
+          resource_name?: string
+          resource_type?: string
+          source_log_id?: string | null
+          status?: string
+          summary?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "jira_resource_tickets_source_log_id_fkey"
+            columns: ["source_log_id"]
+            isOneToOne: false
+            referencedRelation: "collected_logs"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       triggered_alerts: {
         Row: {
           acknowledged_at: string | null

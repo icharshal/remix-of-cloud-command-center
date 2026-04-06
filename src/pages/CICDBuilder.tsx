@@ -21,7 +21,13 @@ export default function CICDBuilder() {
     deploy: false,
   });
   const [generatedConfig, setGeneratedConfig] = useState("");
+  const handlePipelineTypeChange = (value: string) => {
+    if (value === "cloudbuild" || value === "github") {
+      setPipelineType(value);
+    }
+  };
 
+  /* eslint-disable no-useless-escape */
   const generateCloudBuild = () => {
     let config = `# Cloud Build configuration
 # Project: ${projectId}
@@ -225,6 +231,7 @@ jobs:
 
     return config;
   };
+  /* eslint-enable no-useless-escape */
 
   const handleGenerate = () => {
     if (!projectId) {
@@ -267,7 +274,7 @@ jobs:
         </p>
       </div>
 
-      <Tabs value={pipelineType} onValueChange={(v) => setPipelineType(v as any)}>
+      <Tabs value={pipelineType} onValueChange={handlePipelineTypeChange}>
         <TabsList className="grid w-full max-w-md grid-cols-2">
           <TabsTrigger value="cloudbuild">Cloud Build</TabsTrigger>
           <TabsTrigger value="github">GitHub Actions</TabsTrigger>

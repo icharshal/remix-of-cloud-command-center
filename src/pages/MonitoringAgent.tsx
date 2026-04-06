@@ -27,8 +27,9 @@ interface MonitoringAgent {
   created_at: string;
 }
 
-const SUPABASE_URL = "https://frfjddiiqaunvhwjbuzz.supabase.co";
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
 
+/* eslint-disable no-useless-escape */
 const generateBashScript = (agentName: string) => `#!/bin/bash
 #
 # DevOps Monitoring Agent
@@ -220,6 +221,7 @@ while true; do
     sleep \$COLLECT_INTERVAL
 done
 `;
+/* eslint-enable no-useless-escape */
 
 const generatePythonScript = (agentName: string) => `#!/usr/bin/env python3
 """

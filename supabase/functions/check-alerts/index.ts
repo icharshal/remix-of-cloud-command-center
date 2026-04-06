@@ -53,9 +53,35 @@ interface TriggeredAlert {
   namespace?: string | null;
 }
 
+type SlackMrkdwnText = {
+  type: "mrkdwn";
+  text: string;
+};
+
+type SlackBlock =
+  | {
+      type: "header";
+      text: {
+        type: "plain_text";
+        text: string;
+        emoji: true;
+      };
+    }
+  | { type: "divider" }
+  | {
+      type: "section";
+      text: SlackMrkdwnText;
+    }
+  | {
+      type: "context";
+      elements: SlackMrkdwnText[];
+    };
+
+type SupabaseClient = ReturnType<typeof createClient>;
+
 // Send Slack webhook notification
 async function sendSlackNotification(webhookUrl: string, alerts: TriggeredAlert[]): Promise<void> {
-  const blocks = [
+  const blocks: SlackBlock[] = [
     {
       type: "header",
       text: {
@@ -77,9 +103,9 @@ async function sendSlackNotification(webhookUrl: string, alerts: TriggeredAlert[
         type: "mrkdwn",
         text: `${severityEmoji} *${alert.rule_name}*\n${alert.message}`
       }
-    } as any);
+      });
     
-    const contextElements = [];
+    const contextElements: SlackMrkdwnText[] = [];
     if (alert.pod_name) contextElements.push({ type: "mrkdwn", text: `*Pod:* ${alert.pod_name}` });
     if (alert.node_name) contextElements.push({ type: "mrkdwn", text: `*Node:* ${alert.node_name}` });
     if (alert.namespace) contextElements.push({ type: "mrkdwn", text: `*Namespace:* ${alert.namespace}` });
@@ -89,7 +115,7 @@ async function sendSlackNotification(webhookUrl: string, alerts: TriggeredAlert[
       blocks.push({
         type: "context",
         elements: contextElements
-      } as any);
+      });
     }
   }
 
@@ -101,7 +127,7 @@ async function sendSlackNotification(webhookUrl: string, alerts: TriggeredAlert[
         text: `📅 Triggered at ${new Date().toISOString()}`
       }
     ]
-  } as any);
+  });
 
   const response = await fetch(webhookUrl, {
     method: 'POST',
@@ -202,10 +228,8 @@ async function sendEmailNotification(to: string[], alerts: TriggeredAlert[]): Pr
   }
 }
 
-// Send notifications to all configured channels
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function sendNotifications(
-  supabaseClient: any,
+  supabaseClient: SupabaseClient,
   alerts: TriggeredAlert[]
 ): Promise<{ sent: number; failed: number }> {
   if (alerts.length === 0) {

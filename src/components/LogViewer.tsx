@@ -89,7 +89,7 @@ const getLogLevelConfig = (level: string | null) => {
 const highlightLogMessage = (message: string) => {
   // Split into parts and highlight different patterns
   const parts: { text: string; type: string }[] = [];
-  let remaining = message;
+  const remaining = message;
 
   // Patterns to highlight
   const patterns = [

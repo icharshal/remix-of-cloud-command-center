@@ -4,35 +4,41 @@ import { cn } from "@/lib/utils";
 import {
   Cloud,
   GitBranch,
-  Rocket,
   Activity,
   DollarSign,
   Shield,
-  Database,
-  MessageSquare,
   LayoutDashboard,
   Radio,
   Bell,
   FileText,
+  Ticket,
 } from "lucide-react";
 
 interface LayoutProps {
   children: ReactNode;
 }
 
-const navItems = [
-  { path: "/", icon: LayoutDashboard, label: "Dashboard" },
-  { path: "/terraform", icon: Cloud, label: "Terraform Generator" },
-  { path: "/cicd", icon: GitBranch, label: "CI/CD Builder" },
-  { path: "/deployment", icon: Rocket, label: "Deployment Manager" },
-  { path: "/gke", icon: Activity, label: "GKE Dashboard" },
-  { path: "/costs", icon: DollarSign, label: "Cost Analysis" },
-  { path: "/security", icon: Shield, label: "Security Analyzer" },
-  { path: "/backup", icon: Database, label: "Backup Automation" },
-  { path: "/chatops", icon: MessageSquare, label: "ChatOps" },
-  { path: "/monitoring-agent", icon: Radio, label: "Monitoring Agent" },
-  { path: "/alerts", icon: Bell, label: "Alerting" },
-  { path: "/logs", icon: FileText, label: "Log Viewer" },
+const navSections = [
+  {
+    title: "Core",
+    items: [
+      { path: "/", icon: LayoutDashboard, label: "Dashboard" },
+      { path: "/gke", icon: Activity, label: "GKE Dashboard" },
+      { path: "/monitoring-agent", icon: Radio, label: "Monitoring Agent" },
+      { path: "/alerts", icon: Bell, label: "Alerting" },
+      { path: "/logs", icon: FileText, label: "Log Viewer" },
+      { path: "/jira-automation", icon: Ticket, label: "Jira Automation" },
+    ],
+  },
+  {
+    title: "Labs",
+    items: [
+      { path: "/costs", icon: DollarSign, label: "Cost Signals" },
+      { path: "/terraform", icon: Cloud, label: "Terraform Generator" },
+      { path: "/cicd", icon: GitBranch, label: "CI/CD Builder" },
+      { path: "/security", icon: Shield, label: "Security Analyzer" },
+    ],
+  },
 ];
 
 export default function Layout({ children }: LayoutProps) {
@@ -46,26 +52,33 @@ export default function Layout({ children }: LayoutProps) {
           <Cloud className="h-6 w-6 text-primary" />
           <span className="ml-2 text-lg font-bold text-foreground">DevOps Hub</span>
         </div>
-        <nav className="space-y-1 p-4">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = location.pathname === item.path;
-            return (
-              <Link
-                key={item.path}
-                to={item.path}
-                className={cn(
-                  "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                  isActive
-                    ? "bg-primary text-primary-foreground"
-                    : "text-muted-foreground hover:bg-secondary hover:text-foreground"
-                )}
-              >
-                <Icon className="h-4 w-4" />
-                {item.label}
-              </Link>
-            );
-          })}
+        <nav className="space-y-5 p-4">
+          {navSections.map((section) => (
+            <div key={section.title} className="space-y-1">
+              <p className="px-3 pb-1 text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground/70">
+                {section.title}
+              </p>
+              {section.items.map((item) => {
+                const Icon = item.icon;
+                const isActive = location.pathname === item.path;
+                return (
+                  <Link
+                    key={item.path}
+                    to={item.path}
+                    className={cn(
+                      "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
+                      isActive
+                        ? "bg-primary text-primary-foreground"
+                        : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                    )}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </nav>
       </aside>
 

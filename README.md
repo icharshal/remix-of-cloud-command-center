@@ -1,73 +1,60 @@
-# Welcome to your Lovable project
+# DevOps Automation Hub
 
-## Project info
+Operational control plane for:
 
-**URL**: https://lovable.dev/projects/3f59497e-333d-4e4b-ba76-b421d7826ed0
+- monitoring agent ingestion
+- live GKE/log visibility
+- alerts and notifications
+- Jira automation for new Google Cloud resource detection
 
-## How can I edit this code?
+## Local setup
 
-There are several ways of editing your application.
+1. Copy `.env.example` to `.env`
+2. Fill in your Supabase values
+3. Install dependencies:
+   `npm install`
+4. Start the app:
+   `npm run dev`
 
-**Use Lovable**
+## Core product areas
 
-Simply visit the [Lovable Project](https://lovable.dev/projects/3f59497e-333d-4e4b-ba76-b421d7826ed0) and start prompting.
+- Dashboard
+- GKE Dashboard
+- Monitoring Agent
+- Alerting
+- Log Viewer
+- Jira Automation
 
-Changes made via Lovable will be committed automatically to this repo.
+Secondary experiments live under `Labs`.
 
-**Use your preferred IDE**
+## Testing with Google Cloud
 
-If you want to work locally using your own IDE, you can clone this repo and push changes. Pushed changes will also be reflected in Lovable.
+This repo supports testing against real Google Cloud audit logs, but it does not ingest directly from Cloud Logging by itself. Use the helper script to replay audit log entries into `monitoring-ingest`.
 
-The only requirement is having Node.js & npm installed - [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating)
+See:
 
-Follow these steps:
+- [docs/google-cloud-testing.md](C:/Users/HP/Documents/New%20project/remix-of-cloud-command-center/docs/google-cloud-testing.md)
+- [scripts/send-gcp-audit-log-to-monitoring.ps1](C:/Users/HP/Documents/New%20project/remix-of-cloud-command-center/scripts/send-gcp-audit-log-to-monitoring.ps1)
 
-```sh
-# Step 1: Clone the repository using the project's Git URL.
-git clone <YOUR_GIT_URL>
+## Jira automation
 
-# Step 2: Navigate to the project directory.
-cd <YOUR_PROJECT_NAME>
+Jira integration is optional.
 
-# Step 3: Install the necessary dependencies.
-npm i
+When enabled, the app:
 
-# Step 4: Start the development server with auto-reloading and an instant preview.
-npm run dev
-```
+- detects Google Cloud resource creation from ingested audit-style logs
+- records the event in `jira_resource_tickets`
+- attempts Jira issue creation
+- sets a due date 2 days from detection by default
 
-**Edit a file directly in GitHub**
+Required backend environment variables for live Jira creation:
 
-- Navigate to the desired file(s).
-- Click the "Edit" button (pencil icon) at the top right of the file view.
-- Make your changes and commit the changes.
+- `JIRA_API_EMAIL`
+- `JIRA_API_TOKEN`
+- `JIRA_BASE_URL`
+- `JIRA_PROJECT_KEY`
 
-**Use GitHub Codespaces**
+## Validation
 
-- Navigate to the main page of your repository.
-- Click on the "Code" button (green button) near the top right.
-- Select the "Codespaces" tab.
-- Click on "New codespace" to launch a new Codespace environment.
-- Edit files directly within the Codespace and commit and push your changes once you're done.
-
-## What technologies are used for this project?
-
-This project is built with:
-
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-
-## How can I deploy this project?
-
-Simply open [Lovable](https://lovable.dev/projects/3f59497e-333d-4e4b-ba76-b421d7826ed0) and click on Share -> Publish.
-
-## Can I connect a custom domain to my Lovable project?
-
-Yes, you can!
-
-To connect a domain, navigate to Project > Settings > Domains and click Connect Domain.
-
-Read more here: [Setting up a custom domain](https://docs.lovable.dev/features/custom-domain#custom-domain)
+- `npm run lint`
+- `npm run build`
