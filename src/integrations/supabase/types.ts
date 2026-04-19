@@ -444,6 +444,27 @@ export type Database = {
           },
         ]
       }
+      user_roles: {
+        Row: {
+          id: string
+          user_id: string
+          role: "viewer" | "operator" | "admin"
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          user_id: string
+          role?: "viewer" | "operator" | "admin"
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          role?: "viewer" | "operator" | "admin"
+          created_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -474,7 +495,7 @@ export type Database = {
       }
     }
     Enums: {
-      [_ in never]: never
+      app_role: "viewer" | "operator" | "admin"
     }
     CompositeTypes: {
       [_ in never]: never

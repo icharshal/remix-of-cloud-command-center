@@ -8,13 +8,7 @@ import {
   ArrowRight,
   Bell,
   CheckCircle2,
-  Cloud,
-  DollarSign,
-  FileText,
-  GitBranch,
   Radio,
-  Shield,
-  FlaskConical,
   Ticket,
   Boxes,
   Clock,
@@ -122,33 +116,6 @@ const tools = [
     icon: Ticket,
     path: "/jira-automation",
     accent: "text-warning",
-  },
-];
-
-const labTools = [
-  {
-    title: "Cost Signals",
-    description: "Use operational activity as a proxy for spend until billing export is connected",
-    icon: DollarSign,
-    path: "/costs",
-  },
-  {
-    title: "Terraform Generator",
-    description: "Prototype infrastructure code and module scaffolds",
-    icon: Cloud,
-    path: "/terraform",
-  },
-  {
-    title: "CI/CD Builder",
-    description: "Generate starter delivery configurations for experiments",
-    icon: GitBranch,
-    path: "/cicd",
-  },
-  {
-    title: "Security Analyzer",
-    description: "Explore security-oriented views that still need backend hardening",
-    icon: Shield,
-    path: "/security",
   },
 ];
 
@@ -819,44 +786,6 @@ export default function Dashboard() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <div className="flex items-center gap-2">
-            <FlaskConical className="h-5 w-5 text-muted-foreground" />
-            <CardTitle>Labs</CardTitle>
-          </div>
-          <CardDescription>
-            Secondary tools that are still useful, but not part of the app's core incident workflow.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-            {labTools.map((tool) => {
-              const Icon = tool.icon;
-              return (
-                <Card key={tool.path} className="border-border/60 shadow-none">
-                  <CardHeader>
-                    <div className="flex items-start justify-between gap-3">
-                      <Icon className="h-8 w-8 text-muted-foreground" />
-                      <Badge variant="outline">Labs</Badge>
-                    </div>
-                    <CardTitle className="text-foreground">{tool.title}</CardTitle>
-                    <CardDescription>{tool.description}</CardDescription>
-                  </CardHeader>
-                  <CardContent>
-                    <Link to={tool.path}>
-                      <Button variant="outline" className="w-full group">
-                        Open
-                        <ArrowRight className="ml-2 h-4 w-4 transition-transform group-hover:translate-x-1" />
-                      </Button>
-                    </Link>
-                  </CardContent>
-                </Card>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }
