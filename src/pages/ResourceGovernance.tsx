@@ -275,21 +275,67 @@ export default function ResourceGovernance() {
     onError: (e: Error) => toast.error(`Failed: ${e.message}`),
   });
 
+  // Track whether GCP deletion was attempted
+  const [deleteMode, setDeleteMode] = useState<"gcp" | "mark-only">("gcp");
+
   const deleteMutation = useMutation({
     mutationFn: async () => {
       if (!deleteTarget) return;
-      const { error } = await supabase
-        .from("jira_resource_tickets")
-        .update({ validity_status: "deleted", deleted_by: deleteActorEmail || "admin", deleted_at: new Date().toISOString() })
-        .eq("id", deleteTarget.id);
-      if (error) throw error;
-      await logAction(deleteTarget.id, "deleted", {
-        actorEmail: deleteActorEmail,
-        reason: deleteReason,
-      });
+
+      if (deleteMode === "gcp") {
+        // Call the Edge Function to actually delete from GCP
+        const { data: { session } } = await supabase.auth.getSession();
+        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
+        const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
+
+        const res = await fetch(`${supabaseUrl}/functions/v1/gcp-delete-resource`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${session?.access_token ?? anonKey}`,
+            "apikey": anonKey,
+          },
+          body: JSON.stringify({
+            ticket_id: deleteTarget.id,
+            resource_type: deleteTarget.resource_type,
+            resource_name: deleteTarget.resource_name,
+            gcp_project_id: deleteTarget.gcp_project_id ?? "",
+            gcp_region: deleteTarget.gcp_region ?? "us-central1",
+            actor_email: deleteActorEmail,
+            reason: deleteReason,
+          }),
+        });
+
+        const result = await res.json() as { success?: boolean; error?: string; message?: string };
+
+        if (!res.ok || result.error) {
+          throw new Error(result.error ?? "GCP deletion failed");
+        }
+
+        // Edge Function already updates DB + writes audit log
+        return result;
+      } else {
+        // Mark-only mode — just update DB without calling GCP
+        const { error } = await supabase
+          .from("jira_resource_tickets")
+          .update({
+            validity_status: "deleted",
+            deleted_by: deleteActorEmail || "admin",
+            deleted_at: new Date().toISOString(),
+          })
+          .eq("id", deleteTarget.id);
+        if (error) throw error;
+        await logAction(deleteTarget.id, "deleted", {
+          actorEmail: deleteActorEmail,
+          reason: `[Mark only — no GCP API call] ${deleteReason}`,
+        });
+      }
     },
-    onSuccess: () => {
-      toast.success("Resource marked as deleted");
+    onSuccess: (result) => {
+      const msg = deleteMode === "gcp"
+        ? `Deleted from GCP: ${(result as { message?: string })?.message ?? deleteTarget?.resource_name}`
+        : "Resource marked as deleted in portal";
+      toast.success(msg);
       setDeleteTarget(null);
       setDeleteReason("");
       setDeleteActorEmail("");
@@ -576,39 +622,81 @@ export default function ResourceGovernance() {
       </Dialog>
 
       {/* ── Delete confirmation modal ────────────────────────── */}
-      <Dialog open={!!deleteTarget} onOpenChange={open => !open && setDeleteTarget(null)}>
+      <Dialog open={!!deleteTarget} onOpenChange={open => { if (!open) { setDeleteTarget(null); setDeleteMode("gcp"); } }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Confirm deletion</DialogTitle>
+            <DialogTitle>Delete resource</DialogTitle>
             <DialogDescription>
-              Mark <span className="font-medium text-foreground">{deleteTarget?.resource_name}</span> ({deleteTarget?.resource_type}) as deleted.
-              This action is logged in the audit trail.
+              <span className="font-medium text-foreground">{deleteTarget?.resource_name}</span>
+              {" "}({deleteTarget?.resource_type})
+              {deleteTarget?.gcp_project_id && (
+                <span className="text-muted-foreground"> · {deleteTarget.gcp_project_id}</span>
+              )}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 py-2">
+
+            {/* Delete mode selector */}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setDeleteMode("gcp")}
+                className={`rounded-lg border p-3 text-left text-xs transition-colors ${
+                  deleteMode === "gcp"
+                    ? "border-destructive bg-destructive/5 text-destructive"
+                    : "border-border text-muted-foreground hover:border-border/80"
+                }`}
+              >
+                <p className="font-medium mb-0.5">Delete from GCP</p>
+                <p className="opacity-75">Calls GCP API — actually removes the resource</p>
+              </button>
+              <button
+                type="button"
+                onClick={() => setDeleteMode("mark-only")}
+                className={`rounded-lg border p-3 text-left text-xs transition-colors ${
+                  deleteMode === "mark-only"
+                    ? "border-primary bg-primary/5 text-primary"
+                    : "border-border text-muted-foreground hover:border-border/80"
+                }`}
+              >
+                <p className="font-medium mb-0.5">Mark as deleted</p>
+                <p className="opacity-75">Portal only — resource stays in GCP</p>
+              </button>
+            </div>
+
+            {deleteMode === "gcp" && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200 space-y-1">
+                <p className="font-medium">Requires GCP service account</p>
+                <p>Make sure <code className="bg-amber-100 dark:bg-amber-900 px-1 rounded">GCP_SERVICE_ACCOUNT_JSON</code> is set in Supabase Edge Function secrets with delete permissions on this resource type.</p>
+                {!deleteTarget?.gcp_project_id && (
+                  <p className="text-destructive font-medium">⚠ No GCP project ID on this resource — deletion may fail.</p>
+                )}
+              </div>
+            )}
+
             <div className="space-y-1.5">
-              <Label>Your email (for audit log)</Label>
+              <Label>Your email (audit log)</Label>
               <Input placeholder="you@evonence.com" value={deleteActorEmail}
                 onChange={e => setDeleteActorEmail(e.target.value)} />
             </div>
             <div className="space-y-1.5">
-              <Label>Reason</Label>
+              <Label>Reason <span className="text-destructive">*</span></Label>
               <Textarea placeholder="e.g. Resource no longer needed after sprint completion."
                 value={deleteReason}
                 onChange={e => setDeleteReason(e.target.value)}
                 rows={2} />
             </div>
-            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
-              This only marks the resource as deleted in this portal. To actually delete it from GCP,
-              use the GCP Console or run <code className="bg-destructive/10 px-1 rounded">gcloud</code>.
-              GCP API deletion will be wired in Sprint 2.
-            </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
-            <Button variant="destructive" onClick={() => deleteMutation.mutate()}
-              disabled={deleteMutation.isPending}>
-              {deleteMutation.isPending ? "Processing..." : "Confirm deletion"}
+            <Button variant="outline" onClick={() => { setDeleteTarget(null); setDeleteMode("gcp"); }}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => deleteMutation.mutate()}
+              disabled={deleteMutation.isPending || !deleteReason.trim()}
+            >
+              {deleteMutation.isPending
+                ? deleteMode === "gcp" ? "Deleting from GCP..." : "Processing..."
+                : deleteMode === "gcp" ? "Delete from GCP" : "Mark as deleted"}
             </Button>
           </DialogFooter>
         </DialogContent>
