@@ -10,6 +10,7 @@ import {
   FileText,
   Ticket,
   Settings,
+  ShieldCheck,
 } from "lucide-react";
 
 interface LayoutProps {
@@ -18,6 +19,7 @@ interface LayoutProps {
 
 const navItems = [
   { path: "/", icon: LayoutDashboard, label: "Dashboard" },
+  { path: "/resources", icon: ShieldCheck, label: "Resource Governance" },
   { path: "/gke", icon: Activity, label: "GKE Dashboard" },
   { path: "/monitoring-agent", icon: Radio, label: "Monitoring Agent" },
   { path: "/alerts", icon: Bell, label: "Alerting" },

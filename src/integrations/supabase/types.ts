@@ -331,6 +331,18 @@ export type Database = {
           status: string
           summary: string
           updated_at: string
+          validity_status: "active" | "extended" | "expired" | "approved" | "deleted"
+          extended_due_date: string | null
+          extension_reason: string | null
+          extension_requested_at: string | null
+          extension_requested_by: string | null
+          approved_by: string | null
+          approved_at: string | null
+          deleted_by: string | null
+          deleted_at: string | null
+          gcp_project_id: string | null
+          gcp_region: string | null
+          gcp_resource_url: string | null
         }
         Insert: {
           created_at?: string
@@ -442,6 +454,53 @@ export type Database = {
             referencedRelation: "alert_rules"
             referencedColumns: ["id"]
           },
+        ]
+      }
+      resource_actions: {
+        Row: {
+          id: string
+          ticket_id: string
+          action: "created" | "extended" | "approved" | "deleted" | "expired" | "comment"
+          actor_email: string | null
+          actor_name: string | null
+          reason: string | null
+          old_due_date: string | null
+          new_due_date: string | null
+          metadata: Json
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          ticket_id: string
+          action: "created" | "extended" | "approved" | "deleted" | "expired" | "comment"
+          actor_email?: string | null
+          actor_name?: string | null
+          reason?: string | null
+          old_due_date?: string | null
+          new_due_date?: string | null
+          metadata?: Json
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          ticket_id?: string
+          action?: "created" | "extended" | "approved" | "deleted" | "expired" | "comment"
+          actor_email?: string | null
+          actor_name?: string | null
+          reason?: string | null
+          old_due_date?: string | null
+          new_due_date?: string | null
+          metadata?: Json
+          created_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "resource_actions_ticket_id_fkey"
+            columns: ["ticket_id"]
+            isOneToOne: false
+            referencedRelation: "jira_resource_tickets"
+            referencedColumns: ["id"]
+          }
         ]
       }
       user_roles: {
