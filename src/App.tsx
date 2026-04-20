@@ -10,6 +10,7 @@ import MonitoringAgent from "./pages/MonitoringAgent";
 import Alerts from "./pages/Alerts";
 import LogViewerPage from "./pages/LogViewer";
 import JiraAutomation from "./pages/JiraAutomation";
+import Settings from "./pages/Settings";
 import NotFound from "./pages/NotFound";
 // Labs — hidden from nav, still accessible via direct URL
 import TerraformGenerator from "./pages/TerraformGenerator";
@@ -33,6 +34,7 @@ const App = () => (
             <Route path="/alerts" element={<Alerts />} />
             <Route path="/logs" element={<LogViewerPage />} />
             <Route path="/jira-automation" element={<JiraAutomation />} />
+            <Route path="/settings" element={<Settings />} />
             {/* Labs — hidden from nav */}
             <Route path="/terraform" element={<TerraformGenerator />} />
             <Route path="/cicd" element={<CICDBuilder />} />

@@ -9,6 +9,7 @@ import {
   Bell,
   FileText,
   Ticket,
+  Settings,
 } from "lucide-react";
 
 interface LayoutProps {
@@ -22,6 +23,7 @@ const navItems = [
   { path: "/alerts", icon: Bell, label: "Alerting" },
   { path: "/logs", icon: FileText, label: "Log Viewer" },
   { path: "/jira-automation", icon: Ticket, label: "Jira Automation" },
+  { path: "/settings", icon: Settings, label: "Settings" },
 ];
 
 export default function Layout({ children }: LayoutProps) {
