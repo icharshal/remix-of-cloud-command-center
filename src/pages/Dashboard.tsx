@@ -14,7 +14,8 @@ import {
   Clock,
 } from "lucide-react";
 
-import { supabase } from "@/integrations/supabase/client";
+import { collection, query, orderBy, limit, getDocs, onSnapshot } from "firebase/firestore";
+import { db, normalizeDoc } from "@/lib/firebase";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -193,154 +194,76 @@ export default function Dashboard() {
   const { data: agents = [], isLoading: agentsLoading } = useQuery({
     queryKey: ["dashboard-agents"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("monitoring_agents")
-        .select("id, agent_name, status, last_heartbeat, created_at")
-        .order("last_heartbeat", { ascending: false });
-
-      if (error) {
-        throw error;
-      }
-
-      return data as MonitoringAgent[];
+      const snap = await getDocs(query(collection(db, "monitoring_agents"), orderBy("last_heartbeat", "desc")));
+      return snap.docs.map(d => normalizeDoc<MonitoringAgent>(d));
     },
   });
 
   const { data: alerts = [], isLoading: alertsLoading } = useQuery({
     queryKey: ["dashboard-alerts"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("triggered_alerts")
-        .select("id, message, severity, status, triggered_at, pod_name, node_name, namespace")
-        .order("triggered_at", { ascending: false })
-        .limit(8);
-
-      if (error) {
-        throw error;
-      }
-
-      return data as TriggeredAlert[];
+      const snap = await getDocs(query(collection(db, "triggered_alerts"), orderBy("triggered_at", "desc"), limit(8)));
+      return snap.docs.map(d => normalizeDoc<TriggeredAlert>(d));
     },
   });
 
   const { data: logs = [], isLoading: logsLoading } = useQuery({
     queryKey: ["dashboard-logs"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("collected_logs")
-        .select("id, message, log_level, pod_name, namespace, timestamp")
-        .order("timestamp", { ascending: false })
-        .limit(8);
-
-      if (error) {
-        throw error;
-      }
-
-      return data as CollectedLog[];
+      const snap = await getDocs(query(collection(db, "collected_logs"), orderBy("timestamp", "desc"), limit(8)));
+      return snap.docs.map(d => normalizeDoc<CollectedLog>(d));
     },
   });
 
   const { data: events = [], isLoading: eventsLoading } = useQuery({
     queryKey: ["dashboard-events"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("collected_events")
-        .select("id, reason, event_type, involved_object, namespace, created_at")
-        .order("created_at", { ascending: false })
-        .limit(8);
-
-      if (error) {
-        throw error;
-      }
-
-      return data as CollectedEvent[];
+      const snap = await getDocs(query(collection(db, "collected_events"), orderBy("created_at", "desc"), limit(8)));
+      return snap.docs.map(d => normalizeDoc<CollectedEvent>(d));
     },
   });
 
   const { data: rules = [], isLoading: rulesLoading } = useQuery({
     queryKey: ["dashboard-rules"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("alert_rules")
-        .select("id, enabled")
-        .order("created_at", { ascending: false });
-
-      if (error) {
-        throw error;
-      }
-
-      return data as AlertRule[];
+      const snap = await getDocs(query(collection(db, "alert_rules"), orderBy("created_at", "desc")));
+      return snap.docs.map(d => normalizeDoc<AlertRule>(d));
     },
   });
 
   const { data: resources = [], isLoading: resourcesLoading } = useQuery({
     queryKey: ["dashboard-created-resources"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("jira_resource_tickets")
-        .select("id, resource_type, resource_name, creator_email, creator_name, due_date, status, jira_issue_key, created_at")
-        .order("created_at", { ascending: false })
-        .limit(8);
-
-      if (!error && data) {
-        return data as DerivedResource[];
+      try {
+        const snap = await getDocs(query(collection(db, "jira_resource_tickets"), orderBy("created_at", "desc"), limit(8)));
+        return snap.docs.map(d => normalizeDoc<DerivedResource>(d));
+      } catch {
+        const fallback = await getDocs(query(collection(db, "collected_logs"), orderBy("timestamp", "desc"), limit(25)));
+        return fallback.docs
+          .map(d => normalizeDoc<CollectedLog>(d))
+          .map(parseResourceFromLog)
+          .filter((r): r is DerivedResource => r !== null)
+          .slice(0, 8);
       }
-
-      const { data: fallbackLogs, error: fallbackError } = await supabase
-        .from("collected_logs")
-        .select("id, message, log_level, pod_name, namespace, timestamp")
-        .order("timestamp", { ascending: false })
-        .limit(25);
-
-      if (fallbackError) {
-        throw fallbackError;
-      }
-
-      return ((fallbackLogs as CollectedLog[]) ?? [])
-        .map(parseResourceFromLog)
-        .filter((resource): resource is DerivedResource => resource !== null)
-        .slice(0, 8);
     },
   });
 
   useEffect(() => {
-    const channel = supabase
-      .channel("dashboard-overview")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "monitoring_agents" },
-        () => queryClient.invalidateQueries({ queryKey: ["dashboard-agents"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "triggered_alerts" },
-        () => queryClient.invalidateQueries({ queryKey: ["dashboard-alerts"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "collected_logs" },
-        () => queryClient.invalidateQueries({ queryKey: ["dashboard-logs"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "collected_events" },
-        () => queryClient.invalidateQueries({ queryKey: ["dashboard-events"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "alert_rules" },
-        () => queryClient.invalidateQueries({ queryKey: ["dashboard-rules"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "jira_resource_tickets" },
-        () => queryClient.invalidateQueries({ queryKey: ["dashboard-created-resources"] }),
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const unsubs = [
+      onSnapshot(query(collection(db, "monitoring_agents"), orderBy("last_heartbeat", "desc")),
+        () => queryClient.invalidateQueries({ queryKey: ["dashboard-agents"] })),
+      onSnapshot(query(collection(db, "triggered_alerts"), orderBy("triggered_at", "desc"), limit(8)),
+        () => queryClient.invalidateQueries({ queryKey: ["dashboard-alerts"] })),
+      onSnapshot(query(collection(db, "collected_logs"), orderBy("timestamp", "desc"), limit(8)),
+        () => queryClient.invalidateQueries({ queryKey: ["dashboard-logs"] })),
+      onSnapshot(query(collection(db, "collected_events"), orderBy("created_at", "desc"), limit(8)),
+        () => queryClient.invalidateQueries({ queryKey: ["dashboard-events"] })),
+      onSnapshot(query(collection(db, "alert_rules"), orderBy("created_at", "desc")),
+        () => queryClient.invalidateQueries({ queryKey: ["dashboard-rules"] })),
+      onSnapshot(query(collection(db, "jira_resource_tickets"), orderBy("created_at", "desc"), limit(8)),
+        () => queryClient.invalidateQueries({ queryKey: ["dashboard-created-resources"] })),
+    ];
+    return () => unsubs.forEach(u => u());
   }, [queryClient]);
 
   const activeAgents = agents.filter((agent) => agent.status === "active").length;

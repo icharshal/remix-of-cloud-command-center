@@ -11,7 +11,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
-import { supabase } from "@/integrations/supabase/client";
+import { collection, query, orderBy, limit, getDocs, updateDoc, addDoc, doc, onSnapshot } from "firebase/firestore";
+import { db, normalizeDoc } from "@/lib/firebase";
 
 interface JiraAutomationSettings {
   id: string;
@@ -46,88 +47,60 @@ export default function JiraAutomation() {
   const { data: settings, isLoading: settingsLoading } = useQuery({
     queryKey: ["jira-automation-settings"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("jira_automation_settings")
-        .select("id, enabled, jira_base_url, jira_project_key, issue_type, due_days")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (error) {
-        throw error;
-      }
-
-      return (data as JiraAutomationSettings | null) ?? null;
+      const snap = await getDocs(query(collection(db, "jira_automation_settings"), orderBy("created_at", "desc"), limit(1)));
+      if (snap.empty) return null;
+      return normalizeDoc<JiraAutomationSettings>(snap.docs[0]);
     },
   });
 
   const { data: tickets = [], isLoading: ticketsLoading } = useQuery({
     queryKey: ["jira-resource-tickets"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("jira_resource_tickets")
-        .select("id, resource_type, resource_name, creator_name, creator_email, summary, due_date, status, jira_issue_key, jira_issue_url, error_message, created_at")
-        .order("created_at", { ascending: false })
-        .limit(50);
-
-      if (error) {
-        throw error;
-      }
-
-      return data as JiraResourceTicket[];
+      const snap = await getDocs(query(collection(db, "jira_resource_tickets"), orderBy("created_at", "desc"), limit(50)));
+      return snap.docs.map(d => normalizeDoc<JiraResourceTicket>(d));
     },
   });
 
   useEffect(() => {
-    if (settings) {
-      setFormState(settings);
-    }
+    if (settings) setFormState(settings);
   }, [settings]);
 
   useEffect(() => {
-    const channel = supabase
-      .channel("jira-automation-page")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "jira_automation_settings" },
-        () => queryClient.invalidateQueries({ queryKey: ["jira-automation-settings"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "jira_resource_tickets" },
-        () => queryClient.invalidateQueries({ queryKey: ["jira-resource-tickets"] }),
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const unsubs = [
+      onSnapshot(query(collection(db, "jira_automation_settings"), orderBy("created_at", "desc"), limit(1)),
+        () => queryClient.invalidateQueries({ queryKey: ["jira-automation-settings"] })),
+      onSnapshot(query(collection(db, "jira_resource_tickets"), orderBy("created_at", "desc"), limit(50)),
+        () => queryClient.invalidateQueries({ queryKey: ["jira-resource-tickets"] })),
+    ];
+    return () => unsubs.forEach(u => u());
   }, [queryClient]);
 
   const saveSettings = useMutation({
     mutationFn: async (nextSettings: JiraAutomationSettings) => {
-      const { error } = await supabase
-        .from("jira_automation_settings")
-        .update({
+      if (nextSettings.id) {
+        await updateDoc(doc(db, "jira_automation_settings", nextSettings.id), {
           enabled: nextSettings.enabled,
           jira_base_url: nextSettings.jira_base_url,
           jira_project_key: nextSettings.jira_project_key,
           issue_type: nextSettings.issue_type,
           due_days: nextSettings.due_days,
-        })
-        .eq("id", nextSettings.id);
-
-      if (error) {
-        throw error;
+        });
+      } else {
+        await addDoc(collection(db, "jira_automation_settings"), {
+          enabled: nextSettings.enabled,
+          jira_base_url: nextSettings.jira_base_url,
+          jira_project_key: nextSettings.jira_project_key,
+          issue_type: nextSettings.issue_type,
+          due_days: nextSettings.due_days,
+          created_at: new Date().toISOString(),
+        });
       }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["jira-automation-settings"] });
       toast.success("Jira automation settings saved");
     },
-    onError: (error: Error) => {
-      toast.error(`Failed to save Jira settings: ${error.message}`);
-    },
+    onError: (error: Error) => toast.error(`Failed to save Jira settings: ${error.message}`),
   });
 
   const summary = useMemo(() => {

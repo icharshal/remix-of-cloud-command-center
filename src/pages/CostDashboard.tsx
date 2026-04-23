@@ -29,7 +29,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { supabase } from "@/integrations/supabase/client";
+import { collection, query, orderBy, limit, where, getDocs, onSnapshot } from "firebase/firestore";
+import { db, normalizeDoc } from "@/lib/firebase";
 
 interface CollectedLog {
   id: string;
@@ -78,101 +79,53 @@ export default function CostDashboard() {
   const { data: logs = [], isLoading: logsLoading } = useQuery({
     queryKey: ["cost-dashboard-logs", timeRange],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("collected_logs")
-        .select("id, pod_name, namespace, timestamp, log_level")
-        .gte("timestamp", windowStart)
-        .order("timestamp", { ascending: false })
-        .limit(2000);
-
-      if (error) {
-        throw error;
-      }
-
-      return data as CollectedLog[];
+      const snap = await getDocs(
+        query(collection(db, "collected_logs"), where("timestamp", ">=", windowStart), orderBy("timestamp", "desc"), limit(2000))
+      );
+      return snap.docs.map(d => normalizeDoc<CollectedLog>(d));
     },
   });
 
   const { data: metrics = [], isLoading: metricsLoading } = useQuery({
     queryKey: ["cost-dashboard-metrics", timeRange],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("collected_metrics")
-        .select("id, metric_name, metric_type, namespace, pod_name, timestamp, value")
-        .gte("timestamp", windowStart)
-        .order("timestamp", { ascending: false })
-        .limit(3000);
-
-      if (error) {
-        throw error;
-      }
-
-      return data as CollectedMetric[];
+      const snap = await getDocs(
+        query(collection(db, "collected_metrics"), where("timestamp", ">=", windowStart), orderBy("timestamp", "desc"), limit(3000))
+      );
+      return snap.docs.map(d => normalizeDoc<CollectedMetric>(d));
     },
   });
 
   const { data: alerts = [], isLoading: alertsLoading } = useQuery({
     queryKey: ["cost-dashboard-alerts", timeRange],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("triggered_alerts")
-        .select("id, severity, namespace, triggered_at, status")
-        .gte("triggered_at", windowStart)
-        .order("triggered_at", { ascending: false })
-        .limit(1000);
-
-      if (error) {
-        throw error;
-      }
-
-      return data as TriggeredAlert[];
+      const snap = await getDocs(
+        query(collection(db, "triggered_alerts"), where("triggered_at", ">=", windowStart), orderBy("triggered_at", "desc"), limit(1000))
+      );
+      return snap.docs.map(d => normalizeDoc<TriggeredAlert>(d));
     },
   });
 
   const { data: agents = [], isLoading: agentsLoading } = useQuery({
     queryKey: ["cost-dashboard-agents"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("monitoring_agents")
-        .select("id, status, last_heartbeat")
-        .order("last_heartbeat", { ascending: false });
-
-      if (error) {
-        throw error;
-      }
-
-      return data as MonitoringAgent[];
+      const snap = await getDocs(query(collection(db, "monitoring_agents"), orderBy("last_heartbeat", "desc")));
+      return snap.docs.map(d => normalizeDoc<MonitoringAgent>(d));
     },
   });
 
   useEffect(() => {
-    const channel = supabase
-      .channel("cost-dashboard-signals")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "collected_logs" },
-        () => queryClient.invalidateQueries({ queryKey: ["cost-dashboard-logs"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "collected_metrics" },
-        () => queryClient.invalidateQueries({ queryKey: ["cost-dashboard-metrics"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "triggered_alerts" },
-        () => queryClient.invalidateQueries({ queryKey: ["cost-dashboard-alerts"] }),
-      )
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "monitoring_agents" },
-        () => queryClient.invalidateQueries({ queryKey: ["cost-dashboard-agents"] }),
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const unsubs = [
+      onSnapshot(query(collection(db, "collected_logs"), orderBy("timestamp", "desc"), limit(2000)),
+        () => queryClient.invalidateQueries({ queryKey: ["cost-dashboard-logs"] })),
+      onSnapshot(query(collection(db, "collected_metrics"), orderBy("timestamp", "desc"), limit(3000)),
+        () => queryClient.invalidateQueries({ queryKey: ["cost-dashboard-metrics"] })),
+      onSnapshot(query(collection(db, "triggered_alerts"), orderBy("triggered_at", "desc"), limit(1000)),
+        () => queryClient.invalidateQueries({ queryKey: ["cost-dashboard-alerts"] })),
+      onSnapshot(query(collection(db, "monitoring_agents"), orderBy("last_heartbeat", "desc")),
+        () => queryClient.invalidateQueries({ queryKey: ["cost-dashboard-agents"] })),
+    ];
+    return () => unsubs.forEach(u => u());
   }, [queryClient]);
 
   const activeAgents = agents.filter((agent) => agent.status === "active").length;

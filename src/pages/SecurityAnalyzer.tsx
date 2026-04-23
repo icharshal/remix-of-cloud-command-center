@@ -19,7 +19,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { supabase } from "@/integrations/supabase/client";
+import { collection, query, orderBy, limit, getDocs } from "firebase/firestore";
+import { db, normalizeDoc } from "@/lib/firebase";
 
 interface CollectedLog {
   id: string;
@@ -91,51 +92,24 @@ export default function SecurityAnalyzer() {
   const { data: logs = [], isLoading: logsLoading } = useQuery({
     queryKey: ["security-logs"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("collected_logs")
-        .select("id, message, labels, log_level, source, namespace, timestamp")
-        .order("timestamp", { ascending: false })
-        .limit(100);
-
-      if (error) {
-        throw error;
-      }
-
-      return data as CollectedLog[];
+      const snap = await getDocs(query(collection(db, "collected_logs"), orderBy("timestamp", "desc"), limit(100)));
+      return snap.docs.map(d => normalizeDoc<CollectedLog>(d));
     },
   });
 
   const { data: alerts = [], isLoading: alertsLoading } = useQuery({
     queryKey: ["security-alerts"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("triggered_alerts")
-        .select("id, message, severity, status, triggered_at")
-        .order("triggered_at", { ascending: false })
-        .limit(50);
-
-      if (error) {
-        throw error;
-      }
-
-      return data as TriggeredAlert[];
+      const snap = await getDocs(query(collection(db, "triggered_alerts"), orderBy("triggered_at", "desc"), limit(50)));
+      return snap.docs.map(d => normalizeDoc<TriggeredAlert>(d));
     },
   });
 
   const { data: resources = [], isLoading: resourcesLoading } = useQuery({
     queryKey: ["security-resources"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("jira_resource_tickets")
-        .select("id, resource_type, resource_name, creator_email, status, created_at, metadata")
-        .order("created_at", { ascending: false })
-        .limit(100);
-
-      if (error) {
-        throw error;
-      }
-
-      return data as JiraResourceTicket[];
+      const snap = await getDocs(query(collection(db, "jira_resource_tickets"), orderBy("created_at", "desc"), limit(100)));
+      return snap.docs.map(d => normalizeDoc<JiraResourceTicket>(d));
     },
   });
 

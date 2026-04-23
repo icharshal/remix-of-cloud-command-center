@@ -3,30 +3,26 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { 
-  Dialog, DialogContent, DialogDescription, DialogFooter, 
-  DialogHeader, DialogTitle, DialogTrigger 
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter,
+  DialogHeader, DialogTitle, DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { 
-  Clock, Trash2, Plus, Loader2, Play, Pause, RefreshCw, Calendar
-} from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { Clock, Trash2, Plus, Loader2, Play, Pause, RefreshCw, Calendar } from "lucide-react";
+import { collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc, doc } from "firebase/firestore";
+import { db, normalizeDoc } from "@/lib/firebase";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
 interface CronJob {
-  jobid: number;
+  id: string;
   jobname: string;
   schedule: string;
-  command: string;
-  nodename: string;
-  nodeport: number;
-  database: string;
-  username: string;
+  functionName: string;
   active: boolean;
+  created_at: string;
 }
 
 const SCHEDULE_PRESETS = [
@@ -43,101 +39,68 @@ const SCHEDULE_PRESETS = [
 const parseSchedule = (schedule: string): string => {
   const preset = SCHEDULE_PRESETS.find(p => p.value === schedule);
   if (preset) return preset.label;
-  
-  const parts = schedule.split(' ');
+  const parts = schedule.split(" ");
   if (parts.length !== 5) return schedule;
-  
   const [minute, hour] = parts;
-  
-  if (minute === '*' && hour === '*') return 'Every minute';
-  if (minute.startsWith('*/')) return `Every ${minute.slice(2)} minutes`;
-  if (hour.startsWith('*/') && minute === '0') return `Every ${hour.slice(2)} hours`;
-  
+  if (minute === "*" && hour === "*") return "Every minute";
+  if (minute.startsWith("*/")) return `Every ${minute.slice(2)} minutes`;
+  if (hour.startsWith("*/") && minute === "0") return `Every ${hour.slice(2)} hours`;
   return schedule;
 };
 
 export default function CronJobManager() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [newJob, setNewJob] = useState({
-    name: "",
-    schedule: "* * * * *",
-    functionName: "check-alerts",
-  });
+  const [newJob, setNewJob] = useState({ name: "", schedule: "* * * * *", functionName: "check-alerts" });
   const queryClient = useQueryClient();
 
-  // Fetch cron jobs using raw RPC call
   const { data: jobs = [], isLoading, refetch } = useQuery({
-    queryKey: ['cron-jobs'],
+    queryKey: ["cron-jobs"],
     queryFn: async () => {
-      const { data, error } = await supabase.rpc('get_cron_jobs' as never);
-      if (error) {
-        console.log('Error fetching cron jobs:', error.message);
-        return [];
-      }
-      return (data as unknown as CronJob[]) || [];
+      const snap = await getDocs(query(collection(db, "cron_jobs"), orderBy("created_at", "desc")));
+      return snap.docs.map(d => normalizeDoc<CronJob>(d));
     },
   });
 
-  // Toggle job active state
   const toggleJob = useMutation({
-    mutationFn: async ({ jobId, active }: { jobId: number; active: boolean }) => {
-      const { error } = await supabase.rpc('toggle_cron_job' as never, { 
-        job_id: jobId, 
-        is_active: active 
-      } as never);
-      if (error) throw error;
+    mutationFn: async ({ id, active }: { id: string; active: boolean }) => {
+      await updateDoc(doc(db, "cron_jobs", id), { active });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['cron-jobs'] });
+      queryClient.invalidateQueries({ queryKey: ["cron-jobs"] });
       toast.success("Job status updated");
     },
-    onError: (error) => {
-      toast.error("Failed to update job: " + (error as Error).message);
-    },
+    onError: (error: Error) => toast.error("Failed to update job: " + error.message),
   });
 
-  // Delete job
   const deleteJob = useMutation({
-    mutationFn: async (jobName: string) => {
-      const { error } = await supabase.rpc('delete_cron_job' as never, { 
-        job_name: jobName 
-      } as never);
-      if (error) throw error;
+    mutationFn: async (id: string) => {
+      await deleteDoc(doc(db, "cron_jobs", id));
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['cron-jobs'] });
+      queryClient.invalidateQueries({ queryKey: ["cron-jobs"] });
       toast.success("Cron job deleted");
     },
-    onError: (error) => {
-      toast.error("Failed to delete job: " + (error as Error).message);
-    },
+    onError: (error: Error) => toast.error("Failed to delete job: " + error.message),
   });
 
-  // Create job
   const createJob = useMutation({
     mutationFn: async (job: typeof newJob) => {
-      const { error } = await supabase.rpc('create_cron_job' as never, {
-        job_name: job.name,
-        job_schedule: job.schedule,
-        function_name: job.functionName,
-      } as never);
-      if (error) throw error;
+      await addDoc(collection(db, "cron_jobs"), {
+        jobname: job.name,
+        schedule: job.schedule,
+        functionName: job.functionName,
+        active: true,
+        created_at: new Date().toISOString(),
+      });
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['cron-jobs'] });
+      queryClient.invalidateQueries({ queryKey: ["cron-jobs"] });
       setIsDialogOpen(false);
       setNewJob({ name: "", schedule: "* * * * *", functionName: "check-alerts" });
       toast.success("Cron job created");
     },
-    onError: (error) => {
-      toast.error("Failed to create job: " + (error as Error).message);
-    },
+    onError: (error: Error) => toast.error("Failed to create job: " + error.message),
   });
-
-  const getJobFunctionName = (command: string): string => {
-    const match = command.match(/functions\/v1\/([^'"]+)/);
-    return match ? match[1] : 'Unknown';
-  };
 
   return (
     <div className="space-y-4">
@@ -164,7 +127,7 @@ export default function CronJobManager() {
               <DialogHeader>
                 <DialogTitle>Create Scheduled Job</DialogTitle>
                 <DialogDescription>
-                  Schedule an edge function to run automatically on a cron schedule.
+                  Schedule a Cloud Run endpoint to run automatically on a cron schedule.
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
@@ -179,10 +142,7 @@ export default function CronJobManager() {
                 </div>
                 <div className="space-y-2">
                   <Label>Schedule</Label>
-                  <Select 
-                    value={newJob.schedule} 
-                    onValueChange={(v) => setNewJob({ ...newJob, schedule: v })}
-                  >
+                  <Select value={newJob.schedule} onValueChange={(v) => setNewJob({ ...newJob, schedule: v })}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -194,16 +154,11 @@ export default function CronJobManager() {
                       ))}
                     </SelectContent>
                   </Select>
-                  <p className="text-xs text-muted-foreground">
-                    Cron expression: {newJob.schedule}
-                  </p>
+                  <p className="text-xs text-muted-foreground">Cron expression: {newJob.schedule}</p>
                 </div>
                 <div className="space-y-2">
-                  <Label>Edge Function</Label>
-                  <Select 
-                    value={newJob.functionName} 
-                    onValueChange={(v) => setNewJob({ ...newJob, functionName: v })}
-                  >
+                  <Label>Cloud Run Endpoint</Label>
+                  <Select value={newJob.functionName} onValueChange={(v) => setNewJob({ ...newJob, functionName: v })}>
                     <SelectTrigger>
                       <SelectValue />
                     </SelectTrigger>
@@ -215,11 +170,9 @@ export default function CronJobManager() {
                 </div>
               </div>
               <DialogFooter>
-                <Button variant="outline" onClick={() => setIsDialogOpen(false)}>
-                  Cancel
-                </Button>
-                <Button 
-                  onClick={() => createJob.mutate(newJob)} 
+                <Button variant="outline" onClick={() => setIsDialogOpen(false)}>Cancel</Button>
+                <Button
+                  onClick={() => createJob.mutate(newJob)}
                   disabled={!newJob.name || createJob.isPending}
                 >
                   {createJob.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
@@ -238,7 +191,7 @@ export default function CronJobManager() {
             Cron Jobs
           </CardTitle>
           <CardDescription>
-            {jobs.length > 0 ? `${jobs.length} scheduled jobs` : 'No scheduled jobs found'}
+            {jobs.length > 0 ? `${jobs.length} scheduled jobs` : "No scheduled jobs found"}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -250,14 +203,14 @@ export default function CronJobManager() {
             <div className="space-y-4">
               {jobs.map((job) => (
                 <div
-                  key={job.jobid}
+                  key={job.id}
                   className={`flex items-center justify-between border rounded-lg p-4 ${
-                    job.active ? 'border-primary/30 bg-primary/5' : 'border-border opacity-60'
+                    job.active ? "border-primary/30 bg-primary/5" : "border-border opacity-60"
                   }`}
                 >
                   <div className="flex items-center gap-4">
-                    <div className={`p-2 rounded-lg ${job.active ? 'bg-primary/10' : 'bg-muted'}`}>
-                      <Clock className={`h-5 w-5 ${job.active ? 'text-primary' : 'text-muted-foreground'}`} />
+                    <div className={`p-2 rounded-lg ${job.active ? "bg-primary/10" : "bg-muted"}`}>
+                      <Clock className={`h-5 w-5 ${job.active ? "text-primary" : "text-muted-foreground"}`} />
                     </div>
                     <div>
                       <div className="flex items-center gap-2">
@@ -271,7 +224,7 @@ export default function CronJobManager() {
                           <Clock className="h-3 w-3" />
                           {parseSchedule(job.schedule)}
                         </span>
-                        <span>→ {getJobFunctionName(job.command)}</span>
+                        <span>→ {job.functionName}</span>
                       </div>
                     </div>
                   </div>
@@ -284,15 +237,13 @@ export default function CronJobManager() {
                       )}
                       <Switch
                         checked={job.active}
-                        onCheckedChange={(checked) => 
-                          toggleJob.mutate({ jobId: job.jobid, active: checked })
-                        }
+                        onCheckedChange={(checked) => toggleJob.mutate({ id: job.id, active: checked })}
                       />
                     </div>
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => deleteJob.mutate(job.jobname)}
+                      onClick={() => deleteJob.mutate(job.id)}
                       className="text-destructive hover:text-destructive hover:bg-destructive/10"
                     >
                       <Trash2 className="h-4 w-4" />

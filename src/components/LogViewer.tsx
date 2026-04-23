@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { supabase } from "@/integrations/supabase/client";
+import { collection, query, orderBy, limit, getDocs, onSnapshot } from "firebase/firestore";
+import { db, normalizeDoc } from "@/lib/firebase";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -208,13 +209,8 @@ export default function LogViewer() {
   const { data: logs = [], refetch, isLoading } = useQuery({
     queryKey: ['log-viewer-logs'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('collected_logs')
-        .select('*')
-        .order('timestamp', { ascending: false })
-        .limit(500);
-      if (error) throw error;
-      return data as CollectedLog[];
+      const snap = await getDocs(query(collection(db, 'collected_logs'), orderBy('timestamp', 'desc'), limit(500)));
+      return snap.docs.map(d => normalizeDoc<CollectedLog>(d));
     },
   });
 
@@ -232,28 +228,19 @@ export default function LogViewer() {
       return;
     }
 
-    const channel = supabase
-      .channel('log-viewer-realtime')
-      .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'collected_logs' },
-        () => {
-          refetch();
-          if (autoScroll) {
-            // Small delay to allow the new data to render
-            setTimeout(scrollToTop, 100);
-          } else {
-            setNewLogsCount((prev) => prev + 1);
-          }
+    const unsub = onSnapshot(
+      query(collection(db, 'collected_logs'), orderBy('timestamp', 'desc'), limit(500)),
+      () => {
+        refetch();
+        if (autoScroll) {
+          setTimeout(scrollToTop, 100);
+        } else {
+          setNewLogsCount((prev) => prev + 1);
         }
-      )
-      .subscribe((status) => {
-        setRealtimeConnected(status === 'SUBSCRIBED');
-      });
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+      }
+    );
+    setRealtimeConnected(true);
+    return () => { unsub(); setRealtimeConnected(false); };
   }, [isStreaming, autoScroll, refetch, scrollToTop]);
 
   // Handle scroll events to detect if user scrolled away

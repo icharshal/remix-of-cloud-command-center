@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { supabase } from "@/integrations/supabase/client";
+import { collection, query, orderBy, where, getDocs } from "firebase/firestore";
+import { db, normalizeDoc } from "@/lib/firebase";
 import { useQuery } from "@tanstack/react-query";
 import { format, subDays, subHours, startOfDay, startOfHour, eachDayOfInterval, eachHourOfInterval } from "date-fns";
 import { 
@@ -55,13 +56,14 @@ export default function AlertHistoryDashboard() {
     queryKey: ['alert-history', timeRange],
     queryFn: async () => {
       const startDate = getTimeRangeDate(timeRange);
-      const { data, error } = await supabase
-        .from('triggered_alerts')
-        .select('*')
-        .gte('triggered_at', startDate.toISOString())
-        .order('triggered_at', { ascending: true });
-      if (error) throw error;
-      return data as TriggeredAlert[];
+      const snap = await getDocs(
+        query(
+          collection(db, 'triggered_alerts'),
+          where('triggered_at', '>=', startDate.toISOString()),
+          orderBy('triggered_at', 'asc')
+        )
+      );
+      return snap.docs.map(d => normalizeDoc<TriggeredAlert>(d));
     },
   });
 

@@ -10,7 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Plus, Trash2, Mail, MessageSquare, Loader2, Send } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { collection, query, orderBy, getDocs, addDoc, updateDoc, deleteDoc, doc, onSnapshot } from "firebase/firestore";
+import { db, normalizeDoc } from "@/lib/firebase";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 
@@ -38,50 +39,35 @@ export default function NotificationChannels() {
   const [testingChannel, setTestingChannel] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
-  // Fetch notification channels
   const { data: channels = [], isLoading } = useQuery({
     queryKey: ['notification-channels'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('notification_channels')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      return data as NotificationChannel[];
+      const snap = await getDocs(query(collection(db, 'notification_channels'), orderBy('created_at', 'desc')));
+      return snap.docs.map(d => normalizeDoc<NotificationChannel>(d));
     },
   });
 
-  // Set up realtime subscription
   useEffect(() => {
-    const channel = supabase
-      .channel('notification-channels-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'notification_channels' },
-        () => queryClient.invalidateQueries({ queryKey: ['notification-channels'] })
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const unsub = onSnapshot(
+      query(collection(db, 'notification_channels'), orderBy('created_at', 'desc')),
+      () => queryClient.invalidateQueries({ queryKey: ['notification-channels'] })
+    );
+    return unsub;
   }, [queryClient]);
 
-  // Create channel mutation
   const createChannel = useMutation({
     mutationFn: async (channel: typeof defaultChannel) => {
-      const config = channel.channel_type === 'slack_webhook' 
+      const config = channel.channel_type === 'slack_webhook'
         ? { webhook_url: channel.webhook_url }
         : { to: channel.emails.split(',').map(e => e.trim()).filter(Boolean) };
-      
-      const { error } = await supabase.from('notification_channels').insert({
+      await addDoc(collection(db, 'notification_channels'), {
         name: channel.name,
         channel_type: channel.channel_type,
         config,
         severity_filter: channel.severity_filter,
         enabled: true,
+        created_at: new Date().toISOString(),
       });
-      if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notification-channels'] });
@@ -89,30 +75,19 @@ export default function NotificationChannels() {
       setNewChannel(defaultChannel);
       toast.success("Notification channel created");
     },
-    onError: (error) => {
-      toast.error("Failed to create channel: " + error.message);
-    },
+    onError: (error: Error) => toast.error("Failed to create channel: " + error.message),
   });
 
-  // Toggle channel mutation
   const toggleChannel = useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
-      const { error } = await supabase
-        .from('notification_channels')
-        .update({ enabled })
-        .eq('id', id);
-      if (error) throw error;
+      await updateDoc(doc(db, 'notification_channels', id), { enabled });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['notification-channels'] });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['notification-channels'] }),
   });
 
-  // Delete channel mutation
   const deleteChannel = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('notification_channels').delete().eq('id', id);
-      if (error) throw error;
+      await deleteDoc(doc(db, 'notification_channels', id));
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['notification-channels'] });
@@ -120,13 +95,13 @@ export default function NotificationChannels() {
     },
   });
 
-  // Test notification
   const testNotification = async (channelId: string) => {
     setTestingChannel(channelId);
     try {
-      // Trigger check-alerts which will send test notification
-      const { error } = await supabase.functions.invoke('check-alerts');
-      if (error) throw error;
+      const url = import.meta.env.VITE_CHECK_ALERTS_URL;
+      if (!url) throw new Error("VITE_CHECK_ALERTS_URL not configured");
+      const resp = await fetch(url, { method: "POST" });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       toast.success("Test notification triggered (alerts will be sent if any are active)");
     } catch (error: unknown) {
       toast.error("Test failed: " + (error as Error).message);

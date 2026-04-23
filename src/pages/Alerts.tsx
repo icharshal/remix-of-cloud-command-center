@@ -13,7 +13,8 @@ import {
   Bell, Plus, Trash2, AlertTriangle, AlertCircle, Info, CheckCircle2,
   Clock, Play, Loader2, X, BarChart3, Calendar
 } from "lucide-react";
-import { supabase } from "@/integrations/supabase/client";
+import { collection, query, orderBy, limit, getDocs, addDoc, updateDoc, deleteDoc, doc, onSnapshot } from "firebase/firestore";
+import { db, normalizeDoc } from "@/lib/firebase";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import { toast } from "sonner";
@@ -67,58 +68,37 @@ export default function Alerts() {
   const [isChecking, setIsChecking] = useState(false);
   const queryClient = useQueryClient();
 
-  // Fetch alert rules
   const { data: rules = [], isLoading: rulesLoading } = useQuery({
     queryKey: ['alert-rules'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('alert_rules')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (error) throw error;
-      return data as AlertRule[];
+      const snap = await getDocs(query(collection(db, 'alert_rules'), orderBy('created_at', 'desc')));
+      return snap.docs.map(d => normalizeDoc<AlertRule>(d));
     },
   });
 
-  // Fetch triggered alerts
   const { data: alerts = [], isLoading: alertsLoading, refetch: refetchAlerts } = useQuery({
     queryKey: ['triggered-alerts'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('triggered_alerts')
-        .select('*')
-        .order('triggered_at', { ascending: false })
-        .limit(100);
-      if (error) throw error;
-      return data as TriggeredAlert[];
+      const snap = await getDocs(query(collection(db, 'triggered_alerts'), orderBy('triggered_at', 'desc'), limit(100)));
+      return snap.docs.map(d => normalizeDoc<TriggeredAlert>(d));
     },
   });
 
-  // Set up realtime subscriptions
   useEffect(() => {
-    const channel = supabase
-      .channel('alerts-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'alert_rules' },
-        () => queryClient.invalidateQueries({ queryKey: ['alert-rules'] })
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'triggered_alerts' },
-        () => queryClient.invalidateQueries({ queryKey: ['triggered-alerts'] })
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const unsub1 = onSnapshot(
+      query(collection(db, 'alert_rules'), orderBy('created_at', 'desc')),
+      () => queryClient.invalidateQueries({ queryKey: ['alert-rules'] })
+    );
+    const unsub2 = onSnapshot(
+      query(collection(db, 'triggered_alerts'), orderBy('triggered_at', 'desc'), limit(100)),
+      () => queryClient.invalidateQueries({ queryKey: ['triggered-alerts'] })
+    );
+    return () => { unsub1(); unsub2(); };
   }, [queryClient]);
 
-  // Create rule mutation
   const createRule = useMutation({
     mutationFn: async (rule: typeof defaultRule) => {
-      const { error } = await supabase.from('alert_rules').insert({
+      await addDoc(collection(db, 'alert_rules'), {
         name: rule.name,
         description: rule.description || null,
         metric_name: rule.metric_name,
@@ -127,8 +107,8 @@ export default function Alerts() {
         severity: rule.severity,
         cooldown_minutes: rule.cooldown_minutes,
         enabled: true,
+        created_at: new Date().toISOString(),
       });
-      if (error) throw error;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['alert-rules'] });
@@ -136,30 +116,19 @@ export default function Alerts() {
       setNewRule(defaultRule);
       toast.success("Alert rule created");
     },
-    onError: (error) => {
-      toast.error("Failed to create rule: " + error.message);
-    },
+    onError: (error: Error) => toast.error("Failed to create rule: " + error.message),
   });
 
-  // Toggle rule mutation
   const toggleRule = useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
-      const { error } = await supabase
-        .from('alert_rules')
-        .update({ enabled })
-        .eq('id', id);
-      if (error) throw error;
+      await updateDoc(doc(db, 'alert_rules', id), { enabled });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['alert-rules'] });
-    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['alert-rules'] }),
   });
 
-  // Delete rule mutation
   const deleteRule = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase.from('alert_rules').delete().eq('id', id);
-      if (error) throw error;
+      await deleteDoc(doc(db, 'alert_rules', id));
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['alert-rules'] });
@@ -167,14 +136,12 @@ export default function Alerts() {
     },
   });
 
-  // Acknowledge alert mutation
   const acknowledgeAlert = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase
-        .from('triggered_alerts')
-        .update({ status: 'acknowledged', acknowledged_at: new Date().toISOString() })
-        .eq('id', id);
-      if (error) throw error;
+      await updateDoc(doc(db, 'triggered_alerts', id), {
+        status: 'acknowledged',
+        acknowledged_at: new Date().toISOString(),
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['triggered-alerts'] });
@@ -182,14 +149,12 @@ export default function Alerts() {
     },
   });
 
-  // Resolve alert mutation
   const resolveAlert = useMutation({
     mutationFn: async (id: string) => {
-      const { error } = await supabase
-        .from('triggered_alerts')
-        .update({ status: 'resolved', resolved_at: new Date().toISOString() })
-        .eq('id', id);
-      if (error) throw error;
+      await updateDoc(doc(db, 'triggered_alerts', id), {
+        status: 'resolved',
+        resolved_at: new Date().toISOString(),
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['triggered-alerts'] });
@@ -197,13 +162,18 @@ export default function Alerts() {
     },
   });
 
-  // Check alerts manually
   const handleCheckAlerts = async () => {
     setIsChecking(true);
     try {
-      const { data, error } = await supabase.functions.invoke('check-alerts');
-      if (error) throw error;
-      toast.success(`Checked ${data.rules_checked} rules, ${data.alerts_triggered} new alerts triggered`);
+      const url = import.meta.env.VITE_CHECK_ALERTS_URL;
+      if (!url) {
+        toast.error("Set VITE_CHECK_ALERTS_URL to your Cloud Run check-alerts endpoint.");
+        return;
+      }
+      const resp = await fetch(url, { method: "POST" });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      toast.success(`Checked ${data.rules_checked ?? 0} rules, ${data.alerts_triggered ?? 0} new alerts triggered`);
       refetchAlerts();
     } catch (error: unknown) {
       toast.error("Failed to check alerts: " + (error as Error).message);

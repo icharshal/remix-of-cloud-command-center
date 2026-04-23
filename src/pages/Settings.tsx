@@ -13,11 +13,10 @@ import {
   RefreshCw,
   Info,
   ExternalLink,
-  Eye,
-  EyeOff,
 } from "lucide-react";
 
-import { supabase } from "@/integrations/supabase/client";
+import { collection, query, orderBy, limit, getDocs, addDoc, updateDoc, doc } from "firebase/firestore";
+import { db, normalizeDoc } from "@/lib/firebase";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -46,39 +45,27 @@ interface NotificationChannel {
   created_at: string;
 }
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL as string;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
+const FIREBASE_PROJECT_ID = import.meta.env.VITE_FIREBASE_PROJECT_ID as string;
 
 export default function Settings() {
   const queryClient = useQueryClient();
-  const [supabaseStatus, setSupabaseStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
+  const [firestoreStatus, setFirestoreStatus] = useState<"idle" | "checking" | "ok" | "error">("idle");
   const [jiraForm, setJiraForm] = useState<Partial<JiraSettings>>({});
-  const [showAnonKey, setShowAnonKey] = useState(false);
 
-  // ── Jira settings ──────────────────────────────────────────
   const { data: jiraSettings, isLoading: jiraLoading } = useQuery({
     queryKey: ["settings-jira"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("jira_automation_settings")
-        .select("id, enabled, jira_base_url, jira_project_key, issue_type, due_days")
-        .order("created_at", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (error) throw error;
-      return data as JiraSettings | null;
+      const snap = await getDocs(query(collection(db, "jira_automation_settings"), orderBy("created_at", "desc"), limit(1)));
+      if (snap.empty) return null;
+      return normalizeDoc<JiraSettings>(snap.docs[0]);
     },
   });
 
   const { data: channels = [], isLoading: channelsLoading } = useQuery({
     queryKey: ["settings-channels"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("notification_channels")
-        .select("id, name, type, config, enabled, created_at")
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return data as NotificationChannel[];
+      const snap = await getDocs(query(collection(db, "notification_channels"), orderBy("created_at", "desc")));
+      return snap.docs.map(d => normalizeDoc<NotificationChannel>(d));
     },
   });
 
@@ -89,16 +76,15 @@ export default function Settings() {
   const saveJiraMutation = useMutation({
     mutationFn: async (values: Partial<JiraSettings>) => {
       if (jiraSettings?.id) {
-        const { error } = await supabase
-          .from("jira_automation_settings")
-          .update(values)
-          .eq("id", jiraSettings.id);
-        if (error) throw error;
+        await updateDoc(doc(db, "jira_automation_settings", jiraSettings.id), values as Record<string, unknown>);
       } else {
-        const { error } = await supabase
-          .from("jira_automation_settings")
-          .insert({ ...values, enabled: values.enabled ?? false, issue_type: values.issue_type ?? "Task", due_days: values.due_days ?? 2 });
-        if (error) throw error;
+        await addDoc(collection(db, "jira_automation_settings"), {
+          ...values,
+          enabled: values.enabled ?? false,
+          issue_type: values.issue_type ?? "Task",
+          due_days: values.due_days ?? 2,
+          created_at: new Date().toISOString(),
+        });
       }
     },
     onSuccess: () => {
@@ -111,30 +97,21 @@ export default function Settings() {
 
   const toggleChannelMutation = useMutation({
     mutationFn: async ({ id, enabled }: { id: string; enabled: boolean }) => {
-      const { error } = await supabase
-        .from("notification_channels")
-        .update({ enabled })
-        .eq("id", id);
-      if (error) throw error;
+      await updateDoc(doc(db, "notification_channels", id), { enabled });
     },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["settings-channels"] }),
     onError: (err: Error) => toast.error(`Update failed: ${err.message}`),
   });
 
-  // ── Supabase connection check ──────────────────────────────
-  const checkSupabase = async () => {
-    setSupabaseStatus("checking");
+  const checkFirestore = async () => {
+    setFirestoreStatus("checking");
     try {
-      const { error } = await supabase.from("monitoring_agents").select("id").limit(1);
-      setSupabaseStatus(error ? "error" : "ok");
+      await getDocs(query(collection(db, "monitoring_agents"), limit(1)));
+      setFirestoreStatus("ok");
     } catch {
-      setSupabaseStatus("error");
+      setFirestoreStatus("error");
     }
   };
-
-  const maskedKey = SUPABASE_ANON_KEY
-    ? `${SUPABASE_ANON_KEY.slice(0, 12)}${"•".repeat(20)}${SUPABASE_ANON_KEY.slice(-6)}`
-    : "Not set";
 
   return (
     <div className="space-y-6">
@@ -174,23 +151,23 @@ export default function Settings() {
 
         {/* ── Connections tab ─────────────────────────────────── */}
         <TabsContent value="connections" className="space-y-4 mt-4">
-          {/* Supabase */}
+          {/* Firestore */}
           <Card>
             <CardHeader>
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle className="flex items-center gap-2">
                     <Database className="h-4 w-4" />
-                    Supabase
+                    Firestore
                   </CardTitle>
-                  <CardDescription>Database, realtime, and Edge Functions</CardDescription>
+                  <CardDescription>Google Cloud Firestore — database and realtime</CardDescription>
                 </div>
-                {supabaseStatus === "ok" && (
+                {firestoreStatus === "ok" && (
                   <Badge className="bg-success/10 text-success gap-1">
                     <CheckCircle2 className="h-3 w-3" /> Connected
                   </Badge>
                 )}
-                {supabaseStatus === "error" && (
+                {firestoreStatus === "error" && (
                   <Badge variant="destructive" className="gap-1">
                     <XCircle className="h-3 w-3" /> Failed
                   </Badge>
@@ -199,40 +176,27 @@ export default function Settings() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <Label>Project URL</Label>
+                <Label>Firebase Project ID</Label>
                 <div className="flex items-center gap-2">
-                  <Input value={SUPABASE_URL ?? "Not set"} readOnly className="font-mono text-xs" />
-                  {SUPABASE_URL && (
-                    <a href={SUPABASE_URL.replace("/rest/v1", "")} target="_blank" rel="noreferrer">
+                  <Input value={FIREBASE_PROJECT_ID ?? "Not set"} readOnly className="font-mono text-xs" />
+                  {FIREBASE_PROJECT_ID && (
+                    <a href={`https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}`} target="_blank" rel="noreferrer">
                       <Button variant="outline" size="icon">
                         <ExternalLink className="h-4 w-4" />
                       </Button>
                     </a>
                   )}
                 </div>
-              </div>
-              <div className="space-y-2">
-                <Label>Anon Key</Label>
-                <div className="flex items-center gap-2">
-                  <Input
-                    value={showAnonKey ? (SUPABASE_ANON_KEY ?? "Not set") : maskedKey}
-                    readOnly
-                    className="font-mono text-xs"
-                  />
-                  <Button variant="outline" size="icon" onClick={() => setShowAnonKey(!showAnonKey)}>
-                    {showAnonKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </Button>
-                </div>
                 <p className="text-xs text-muted-foreground">
-                  Set via <code className="rounded bg-muted px-1">VITE_SUPABASE_PUBLISHABLE_KEY</code> environment variable.
+                  Set via <code className="rounded bg-muted px-1">VITE_FIREBASE_PROJECT_ID</code> environment variable.
                 </p>
               </div>
               <Button
                 variant="outline"
-                onClick={checkSupabase}
-                disabled={supabaseStatus === "checking"}
+                onClick={checkFirestore}
+                disabled={firestoreStatus === "checking"}
               >
-                {supabaseStatus === "checking" ? (
+                {firestoreStatus === "checking" ? (
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 ) : (
                   <RefreshCw className="mr-2 h-4 w-4" />
@@ -332,7 +296,7 @@ export default function Settings() {
 
                   <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-200">
                     <p className="font-medium mb-1">⚠ Jira API token</p>
-                    <p>The API token is stored in your Supabase Edge Function secrets, not here. To update it, go to your Supabase dashboard → Edge Functions → Secrets and set <code className="rounded bg-amber-100 dark:bg-amber-900 px-1">JIRA_API_TOKEN</code>.</p>
+                    <p>Set <code className="rounded bg-amber-100 dark:bg-amber-900 px-1">JIRA_API_TOKEN</code> as an environment variable in your Cloud Run service or Secret Manager.</p>
                   </div>
 
                   <Button
@@ -415,11 +379,11 @@ export default function Settings() {
               <div className="grid gap-3 sm:grid-cols-2">
                 {[
                   { label: "Version", value: "Sprint 1" },
-                  { label: "Stack", value: "React + Vite + Supabase" },
-                  { label: "Deployment", value: "Vercel" },
-                  { label: "Database", value: "Supabase (PostgreSQL)" },
-                  { label: "Realtime", value: "Supabase Realtime" },
-                  { label: "Edge Functions", value: "check-alerts, monitoring-ingest" },
+                  { label: "Stack", value: "React + Vite + Firestore" },
+                  { label: "Deployment", value: "Cloud Run" },
+                  { label: "Database", value: "Cloud Firestore" },
+                  { label: "Realtime", value: "Firestore onSnapshot" },
+                  { label: "Backend Services", value: "check-alerts, monitoring-ingest (Cloud Run)" },
                 ].map(({ label, value }) => (
                   <div key={label} className="rounded-md bg-muted/40 p-3">
                     <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>

@@ -11,7 +11,8 @@ import {
   Activity, RefreshCw, AlertCircle, Clock
 } from "lucide-react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
+import { collection, query, orderBy, getDocs, onSnapshot } from "firebase/firestore";
+import { db, normalizeDoc } from "@/lib/firebase";
 
 interface MonitoringAgent {
   id: string;
@@ -27,7 +28,7 @@ interface MonitoringAgent {
   created_at: string;
 }
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const INGEST_ENDPOINT = import.meta.env.VITE_INGEST_ENDPOINT ?? "";
 
 /* eslint-disable no-useless-escape */
 const generateBashScript = (agentName: string) => `#!/bin/bash
@@ -42,8 +43,7 @@ set -e
 AGENT_NAME="${agentName || 'monitoring-agent'}"
 AGENT_ID="\${AGENT_NAME}-\$(hostname)-\$\$"
 AGENT_TYPE="pod"  # Change to 'vm' for VM deployments
-SUPABASE_URL="${SUPABASE_URL}"
-INGEST_ENDPOINT="\${SUPABASE_URL}/functions/v1/monitoring-ingest"
+INGEST_ENDPOINT="${INGEST_ENDPOINT}"
 COLLECT_INTERVAL=30  # seconds
 
 # Detect environment
@@ -640,33 +640,21 @@ export default function MonitoringAgent() {
 
   const fetchAgents = async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from('monitoring_agents')
-      .select('*')
-      .order('last_heartbeat', { ascending: false });
-    
-    if (!error && data) {
-      setAgents(data);
+    try {
+      const snap = await getDocs(query(collection(db, 'monitoring_agents'), orderBy('last_heartbeat', 'desc')));
+      setAgents(snap.docs.map(d => normalizeDoc<MonitoringAgent>(d)));
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   useEffect(() => {
     fetchAgents();
-
-    // Subscribe to realtime updates
-    const channel = supabase
-      .channel('monitoring-agents-changes')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'monitoring_agents' },
-        () => fetchAgents()
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const unsub = onSnapshot(
+      query(collection(db, 'monitoring_agents'), orderBy('last_heartbeat', 'desc')),
+      () => fetchAgents()
+    );
+    return unsub;
   }, []);
 
   const copyToClipboard = (text: string, type: string) => {

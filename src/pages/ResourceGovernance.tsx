@@ -9,7 +9,8 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { supabase } from "@/integrations/supabase/client";
+import { collection, query, orderBy, limit, where, getDocs, updateDoc, addDoc, doc, onSnapshot } from "firebase/firestore";
+import { db, normalizeDoc } from "@/lib/firebase";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -140,13 +141,8 @@ export default function ResourceGovernance() {
   const { data: tickets = [], isLoading } = useQuery({
     queryKey: ["resource-governance-tickets"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("jira_resource_tickets")
-        .select("id, resource_type, resource_name, creator_name, creator_email, summary, due_date, extended_due_date, validity_status, extension_reason, extension_requested_by, extension_requested_at, approved_by, deleted_by, jira_issue_key, jira_issue_url, status, gcp_project_id, gcp_region, gcp_resource_url, created_at")
-        .order("created_at", { ascending: false })
-        .limit(200);
-      if (error) throw error;
-      return (data ?? []) as ResourceTicket[];
+      const snap = await getDocs(query(collection(db, "jira_resource_tickets"), orderBy("created_at", "desc"), limit(200)));
+      return snap.docs.map(d => normalizeDoc<ResourceTicket>(d));
     },
   });
 
@@ -154,26 +150,21 @@ export default function ResourceGovernance() {
     queryKey: ["resource-actions", historyTarget?.id],
     enabled: !!historyTarget,
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("resource_actions")
-        .select("id, ticket_id, action, actor_email, actor_name, reason, old_due_date, new_due_date, created_at")
-        .eq("ticket_id", historyTarget!.id)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return (data ?? []) as ResourceAction[];
+      const snap = await getDocs(
+        query(collection(db, "resource_actions"), where("ticket_id", "==", historyTarget!.id), orderBy("created_at", "desc"))
+      );
+      return snap.docs.map(d => normalizeDoc<ResourceAction>(d));
     },
   });
 
-  // ── Realtime ───────────────────────────────────────────────
   useEffect(() => {
-    const channel = supabase
-      .channel("resource-governance")
-      .on("postgres_changes", { event: "*", schema: "public", table: "jira_resource_tickets" },
-        () => queryClient.invalidateQueries({ queryKey: ["resource-governance-tickets"] }))
-      .on("postgres_changes", { event: "*", schema: "public", table: "resource_actions" },
-        () => queryClient.invalidateQueries({ queryKey: ["resource-actions"] }))
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
+    const unsubs = [
+      onSnapshot(query(collection(db, "jira_resource_tickets"), orderBy("created_at", "desc"), limit(200)),
+        () => queryClient.invalidateQueries({ queryKey: ["resource-governance-tickets"] })),
+      onSnapshot(query(collection(db, "resource_actions"), orderBy("created_at", "desc")),
+        () => queryClient.invalidateQueries({ queryKey: ["resource-actions"] })),
+    ];
+    return () => unsubs.forEach(u => u());
   }, [queryClient]);
 
   // ── Metrics ────────────────────────────────────────────────
@@ -213,7 +204,7 @@ export default function ResourceGovernance() {
     action: ActionType,
     opts: { actorEmail?: string; actorName?: string; reason?: string; oldDue?: string; newDue?: string }
   ) => {
-    await supabase.from("resource_actions").insert({
+    await addDoc(collection(db, "resource_actions"), {
       ticket_id: ticketId,
       action,
       actor_email: opts.actorEmail ?? null,
@@ -221,6 +212,7 @@ export default function ResourceGovernance() {
       reason: opts.reason ?? null,
       old_due_date: opts.oldDue ?? null,
       new_due_date: opts.newDue ?? null,
+      created_at: new Date().toISOString(),
     });
   }, []);
 
@@ -229,17 +221,13 @@ export default function ResourceGovernance() {
       if (!extendTarget) return;
       const currentDue = extendTarget.extended_due_date ?? extendTarget.due_date;
       const newDue = format(addDays(parseISO(currentDue), extendDays), "yyyy-MM-dd");
-      const { error } = await supabase
-        .from("jira_resource_tickets")
-        .update({
-          validity_status: "extended",
-          extended_due_date: newDue,
-          extension_reason: extendReason,
-          extension_requested_by: extendRequesterEmail || extendRequesterName || "unknown",
-          extension_requested_at: new Date().toISOString(),
-        })
-        .eq("id", extendTarget.id);
-      if (error) throw error;
+      await updateDoc(doc(db, "jira_resource_tickets", extendTarget.id), {
+        validity_status: "extended",
+        extended_due_date: newDue,
+        extension_reason: extendReason,
+        extension_requested_by: extendRequesterEmail || extendRequesterName || "unknown",
+        extension_requested_at: new Date().toISOString(),
+      });
       await logAction(extendTarget.id, "extended", {
         actorEmail: extendRequesterEmail,
         actorName: extendRequesterName,
@@ -261,11 +249,11 @@ export default function ResourceGovernance() {
 
   const approveMutation = useMutation({
     mutationFn: async (ticket: ResourceTicket) => {
-      const { error } = await supabase
-        .from("jira_resource_tickets")
-        .update({ validity_status: "approved", approved_by: "admin", approved_at: new Date().toISOString() })
-        .eq("id", ticket.id);
-      if (error) throw error;
+      await updateDoc(doc(db, "jira_resource_tickets", ticket.id), {
+        validity_status: "approved",
+        approved_by: "admin",
+        approved_at: new Date().toISOString(),
+      });
       await logAction(ticket.id, "approved", { actorName: "admin" });
     },
     onSuccess: () => {
@@ -283,18 +271,11 @@ export default function ResourceGovernance() {
       if (!deleteTarget) return;
 
       if (deleteMode === "gcp") {
-        // Call the Edge Function to actually delete from GCP
-        const { data: { session } } = await supabase.auth.getSession();
-        const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string;
-        const anonKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string;
-
-        const res = await fetch(`${supabaseUrl}/functions/v1/gcp-delete-resource`, {
+        const gcpDeleteUrl = import.meta.env.VITE_GCP_DELETE_URL as string;
+        if (!gcpDeleteUrl) throw new Error("VITE_GCP_DELETE_URL not configured");
+        const res = await fetch(gcpDeleteUrl, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${session?.access_token ?? anonKey}`,
-            "apikey": anonKey,
-          },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ticket_id: deleteTarget.id,
             resource_type: deleteTarget.resource_type,
@@ -305,26 +286,22 @@ export default function ResourceGovernance() {
             reason: deleteReason,
           }),
         });
-
         const result = await res.json() as { success?: boolean; error?: string; message?: string };
-
-        if (!res.ok || result.error) {
-          throw new Error(result.error ?? "GCP deletion failed");
-        }
-
-        // Edge Function already updates DB + writes audit log
+        if (!res.ok || result.error) throw new Error(result.error ?? "GCP deletion failed");
+        // Update Firestore after successful GCP deletion
+        await updateDoc(doc(db, "jira_resource_tickets", deleteTarget.id), {
+          validity_status: "deleted",
+          deleted_by: deleteActorEmail || "admin",
+          deleted_at: new Date().toISOString(),
+        });
+        await logAction(deleteTarget.id, "deleted", { actorEmail: deleteActorEmail, reason: deleteReason });
         return result;
       } else {
-        // Mark-only mode — just update DB without calling GCP
-        const { error } = await supabase
-          .from("jira_resource_tickets")
-          .update({
-            validity_status: "deleted",
-            deleted_by: deleteActorEmail || "admin",
-            deleted_at: new Date().toISOString(),
-          })
-          .eq("id", deleteTarget.id);
-        if (error) throw error;
+        await updateDoc(doc(db, "jira_resource_tickets", deleteTarget.id), {
+          validity_status: "deleted",
+          deleted_by: deleteActorEmail || "admin",
+          deleted_at: new Date().toISOString(),
+        });
         await logAction(deleteTarget.id, "deleted", {
           actorEmail: deleteActorEmail,
           reason: `[Mark only — no GCP API call] ${deleteReason}`,

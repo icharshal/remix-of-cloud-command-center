@@ -14,7 +14,8 @@ import {
 import { Input } from "@/components/ui/input";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, AreaChart, Area } from "recharts";
 import { ChartContainer, ChartTooltipContent } from "@/components/ui/chart";
-import { supabase } from "@/integrations/supabase/client";
+import { collection, query, orderBy, limit, getDocs, onSnapshot } from "firebase/firestore";
+import { db, normalizeDoc } from "@/lib/firebase";
 import { useQuery } from "@tanstack/react-query";
 import { format, formatDistanceToNow } from "date-fns";
 
@@ -85,92 +86,51 @@ export default function GKEDashboard() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [realtimeConnected, setRealtimeConnected] = useState(false);
 
-  // Fetch logs with realtime updates
   const { data: logs = [], refetch: refetchLogs, isLoading: logsLoading } = useQuery({
     queryKey: ['collected-logs'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('collected_logs')
-        .select('*')
-        .order('timestamp', { ascending: false })
-        .limit(100);
-      if (error) throw error;
-      return data as CollectedLog[];
+      const snap = await getDocs(query(collection(db, 'collected_logs'), orderBy('timestamp', 'desc'), limit(100)));
+      return snap.docs.map(d => normalizeDoc<CollectedLog>(d));
     },
   });
 
-  // Fetch events with realtime updates
   const { data: events = [], refetch: refetchEvents, isLoading: eventsLoading } = useQuery({
     queryKey: ['collected-events'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('collected_events')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50);
-      if (error) throw error;
-      return data as CollectedEvent[];
+      const snap = await getDocs(query(collection(db, 'collected_events'), orderBy('created_at', 'desc'), limit(50)));
+      return snap.docs.map(d => normalizeDoc<CollectedEvent>(d));
     },
   });
 
-  // Fetch metrics with realtime updates
   const { data: metrics = [], refetch: refetchMetrics, isLoading: metricsLoading } = useQuery({
     queryKey: ['collected-metrics'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('collected_metrics')
-        .select('*')
-        .order('timestamp', { ascending: false })
-        .limit(500);
-      if (error) throw error;
-      return data as CollectedMetric[];
+      const snap = await getDocs(query(collection(db, 'collected_metrics'), orderBy('timestamp', 'desc'), limit(500)));
+      return snap.docs.map(d => normalizeDoc<CollectedMetric>(d));
     },
   });
 
-  // Fetch agents
   const { data: agents = [], refetch: refetchAgents, isLoading: agentsLoading } = useQuery({
     queryKey: ['monitoring-agents'],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from('monitoring_agents')
-        .select('*')
-        .order('last_heartbeat', { ascending: false });
-      if (error) throw error;
-      return data as MonitoringAgent[];
+      const snap = await getDocs(query(collection(db, 'monitoring_agents'), orderBy('last_heartbeat', 'desc')));
+      return snap.docs.map(d => normalizeDoc<MonitoringAgent>(d));
     },
   });
 
-  // Set up realtime subscriptions
   useEffect(() => {
-    const channel = supabase
-      .channel('gke-dashboard-realtime')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'collected_logs' },
-        () => refetchLogs()
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'collected_events' },
-        () => refetchEvents()
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'collected_metrics' },
-        () => refetchMetrics()
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'monitoring_agents' },
-        () => refetchAgents()
-      )
-      .subscribe((status) => {
-        setRealtimeConnected(status === 'SUBSCRIBED');
-      });
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
+    const unsubs = [
+      onSnapshot(query(collection(db, 'collected_logs'), orderBy('timestamp', 'desc'), limit(100)),
+        () => { refetchLogs(); }),
+      onSnapshot(query(collection(db, 'collected_events'), orderBy('created_at', 'desc'), limit(50)),
+        () => { refetchEvents(); }),
+      onSnapshot(query(collection(db, 'collected_metrics'), orderBy('timestamp', 'desc'), limit(500)),
+        () => { refetchMetrics(); }),
+      onSnapshot(query(collection(db, 'monitoring_agents'), orderBy('last_heartbeat', 'desc')),
+        () => { refetchAgents(); }),
+    ];
+    setRealtimeConnected(true);
+    return () => { unsubs.forEach(u => u()); setRealtimeConnected(false); };
   }, [refetchLogs, refetchEvents, refetchMetrics, refetchAgents]);
 
   const handleRefresh = async () => {
