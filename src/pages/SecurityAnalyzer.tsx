@@ -5,11 +5,13 @@ import {
   AlertCircle,
   CheckCircle2,
   FileWarning,
+  KeyRound,
   Loader2,
   RefreshCw,
   Shield,
   ShieldAlert,
   ShieldCheck,
+  UserRound,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -22,6 +24,7 @@ import { supabase } from "@/integrations/supabase/client";
 interface CollectedLog {
   id: string;
   message: string;
+  labels: Record<string, string> | null;
   log_level: string | null;
   source: string | null;
   namespace: string | null;
@@ -58,6 +61,19 @@ interface Finding {
   timestamp?: string;
 }
 
+interface AccessEntry {
+  id: string;
+  principal: string;
+  access: string;
+  resource: string;
+  action: "granted" | "revoked" | "used" | "created";
+  source: "policy-delta" | "authorization-info" | "resource-ticket" | "log-labels";
+  risk: "high" | "medium" | "low";
+  actor?: string | null;
+  lastSeen: string;
+  evidence: string;
+}
+
 const getSeverityBadge = (severity: Finding["severity"]) => {
   const variant =
     severity === "high" ? "destructive" : severity === "medium" ? "secondary" : "default";
@@ -77,7 +93,7 @@ export default function SecurityAnalyzer() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from("collected_logs")
-        .select("id, message, log_level, source, namespace, timestamp")
+        .select("id, message, labels, log_level, source, namespace, timestamp")
         .order("timestamp", { ascending: false })
         .limit(100);
 
@@ -131,6 +147,184 @@ export default function SecurityAnalyzer() {
     ]);
     toast.success("Security signals refreshed");
   };
+
+  const accessInventory = useMemo<AccessEntry[]>(() => {
+    const entries: AccessEntry[] = [];
+    const normalizeRisk = (access: string, action: AccessEntry["action"]): AccessEntry["risk"] => {
+      const lowered = access.toLowerCase();
+      if (
+        lowered.includes("owner") ||
+        lowered.includes("admin") ||
+        lowered.includes("iam.serviceaccountkey") ||
+        lowered.includes("setiampolicy")
+      ) {
+        return "high";
+      }
+
+      if (action === "granted" || lowered.includes("editor") || lowered.includes("write")) {
+        return "medium";
+      }
+
+      return "low";
+    };
+
+    const addEntry = (entry: Omit<AccessEntry, "id" | "risk">) => {
+      const risk = normalizeRisk(entry.access, entry.action);
+      const id = [
+        entry.principal,
+        entry.access,
+        entry.resource,
+        entry.action,
+        entry.lastSeen,
+      ].join("|");
+
+      entries.push({ ...entry, id, risk });
+    };
+
+    const getNestedValue = (value: unknown, path: string[]): unknown => {
+      let current = value;
+      for (const segment of path) {
+        if (!current || typeof current !== "object" || !(segment in current)) {
+          return null;
+        }
+        current = (current as Record<string, unknown>)[segment];
+      }
+      return current;
+    };
+
+    const parseJson = (message: string): Record<string, unknown> | null => {
+      const trimmed = message.trim();
+      if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+        return null;
+      }
+
+      try {
+        return JSON.parse(trimmed) as Record<string, unknown>;
+      } catch {
+        return null;
+      }
+    };
+
+    const getString = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim() : null);
+
+    logs.forEach((log) => {
+      const parsed = parseJson(log.message);
+      const labels = log.labels ?? {};
+      const actor =
+        getString(labels.principalEmail) ||
+        getString(labels["protoPayload.authenticationInfo.principalEmail"]) ||
+        getString(getNestedValue(parsed, ["protoPayload", "authenticationInfo", "principalEmail"]));
+      const resource =
+        getString(labels.resourceName) ||
+        getString(labels["protoPayload.resourceName"]) ||
+        getString(getNestedValue(parsed, ["protoPayload", "resourceName"])) ||
+        getString(getNestedValue(parsed, ["resource", "type"])) ||
+        log.namespace ||
+        "unknown resource";
+
+      const serviceData =
+        getNestedValue(parsed, ["protoPayload", "serviceData"]) ||
+        getNestedValue(parsed, ["serviceData"]);
+      const policyDelta =
+        getNestedValue(serviceData, ["policyDelta"]) ||
+        getNestedValue(parsed, ["protoPayload", "policyDelta"]) ||
+        getNestedValue(parsed, ["policyDelta"]);
+      const bindingDeltas = getNestedValue(policyDelta, ["bindingDeltas"]);
+
+      if (Array.isArray(bindingDeltas)) {
+        bindingDeltas.forEach((delta, index) => {
+          const deltaRecord = delta as Record<string, unknown>;
+          const member = getString(deltaRecord.member);
+          const role = getString(deltaRecord.role);
+          const actionText = getString(deltaRecord.action)?.toLowerCase();
+          if (!member || !role) {
+            return;
+          }
+
+          addEntry({
+            principal: member.replace(/^(user|group|serviceAccount):/, ""),
+            access: role,
+            resource,
+            action: actionText === "remove" ? "revoked" : "granted",
+            source: "policy-delta",
+            actor,
+            lastSeen: log.timestamp,
+            evidence: `IAM policy delta from log ${log.id}${index ? ` #${index + 1}` : ""}`,
+          });
+        });
+      }
+
+      const authorizationInfo = getNestedValue(parsed, ["protoPayload", "authorizationInfo"]);
+      if (Array.isArray(authorizationInfo) && actor) {
+        authorizationInfo.slice(0, 8).forEach((info, index) => {
+          const infoRecord = info as Record<string, unknown>;
+          const permission = getString(infoRecord.permission);
+          const authResource = getString(infoRecord.resource) || resource;
+          const granted = infoRecord.granted;
+          if (!permission || granted === false) {
+            return;
+          }
+
+          addEntry({
+            principal: actor,
+            access: permission,
+            resource: authResource,
+            action: "used",
+            source: "authorization-info",
+            actor,
+            lastSeen: log.timestamp,
+            evidence: `Granted authorizationInfo entry from log ${log.id}${index ? ` #${index + 1}` : ""}`,
+          });
+        });
+      }
+
+      const labelPrincipal = getString(labels.member) || getString(labels.principal) || actor;
+      const labelRole = getString(labels.role) || getString(labels.permission);
+      if (labelPrincipal && labelRole) {
+        addEntry({
+          principal: labelPrincipal.replace(/^(user|group|serviceAccount):/, ""),
+          access: labelRole,
+          resource,
+          action: "used",
+          source: "log-labels",
+          actor,
+          lastSeen: log.timestamp,
+          evidence: `Access labels from log ${log.id}`,
+        });
+      }
+    });
+
+    resources.forEach((resource) => {
+      const principal = resource.creator_email;
+      if (!principal) {
+        return;
+      }
+
+      addEntry({
+        principal,
+        access: `created ${resource.resource_type}`,
+        resource: resource.resource_name,
+        action: "created",
+        source: "resource-ticket",
+        actor: principal,
+        lastSeen: resource.created_at,
+        evidence: `Detected resource ticket ${resource.id}`,
+      });
+    });
+
+    const deduped = new Map<string, AccessEntry>();
+    entries.forEach((entry) => {
+      const key = `${entry.principal}|${entry.access}|${entry.resource}|${entry.action}`;
+      const current = deduped.get(key);
+      if (!current || new Date(entry.lastSeen) > new Date(current.lastSeen)) {
+        deduped.set(key, entry);
+      }
+    });
+
+    return Array.from(deduped.values()).sort(
+      (left, right) => new Date(right.lastSeen).getTime() - new Date(left.lastSeen).getTime(),
+    );
+  }, [logs, resources]);
 
   const iamFindings = useMemo<Finding[]>(() => {
     const fromLogs = logs
@@ -293,6 +487,8 @@ export default function SecurityAnalyzer() {
 
   const highSeverity = allFindings.filter((finding) => finding.severity === "high").length;
   const mediumSeverity = allFindings.filter((finding) => finding.severity === "medium").length;
+  const principalsWithAccess = new Set(accessInventory.map((entry) => entry.principal)).size;
+  const highRiskAccess = accessInventory.filter((entry) => entry.risk === "high").length;
   const loading = logsLoading || alertsLoading || resourcesLoading;
 
   const renderFindings = (findings: Finding[], emptyMessage: string) => {
@@ -339,6 +535,69 @@ export default function SecurityAnalyzer() {
             </div>
           </div>
         ))}
+      </div>
+    );
+  };
+
+  const renderAccessInventory = () => {
+    if (loading) {
+      return (
+        <div className="flex items-center justify-center py-8 text-muted-foreground">
+          <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+          Loading access inventory...
+        </div>
+      );
+    }
+
+    if (accessInventory.length === 0) {
+      return (
+        <div className="rounded-lg border border-dashed border-border p-6 text-sm text-muted-foreground">
+          No access inventory has been detected yet. Ingest structured cloud audit logs with IAM policy deltas or authorizationInfo entries to populate this table.
+        </div>
+      );
+    }
+
+    return (
+      <div className="overflow-hidden rounded-lg border border-border">
+        <div className="grid grid-cols-[1.2fr_1.2fr_1.3fr_0.7fr_0.8fr] gap-3 border-b border-border bg-secondary px-4 py-3 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          <span>Principal</span>
+          <span>Access</span>
+          <span>Resource</span>
+          <span>Signal</span>
+          <span>Last Seen</span>
+        </div>
+        <div className="divide-y divide-border">
+          {accessInventory.slice(0, 50).map((entry) => (
+            <div
+              key={entry.id}
+              className="grid grid-cols-[1.2fr_1.2fr_1.3fr_0.7fr_0.8fr] gap-3 px-4 py-3 text-sm"
+            >
+              <div className="min-w-0">
+                <p className="truncate font-medium text-foreground">{entry.principal}</p>
+                {entry.actor && entry.actor !== entry.principal ? (
+                  <p className="truncate text-xs text-muted-foreground">Actor: {entry.actor}</p>
+                ) : null}
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-foreground">{entry.access}</p>
+                <div className="mt-1 flex gap-1">
+                  <Badge variant={entry.risk === "high" ? "destructive" : "outline"}>{entry.risk}</Badge>
+                </div>
+              </div>
+              <p className="min-w-0 truncate text-muted-foreground">{entry.resource}</p>
+              <div className="space-y-1">
+                <Badge variant="secondary">{entry.action}</Badge>
+                <p className="text-xs text-muted-foreground">{entry.source}</p>
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs text-muted-foreground">
+                  {formatDistanceToNow(new Date(entry.lastSeen), { addSuffix: true })}
+                </p>
+                <p className="truncate text-xs text-muted-foreground">{entry.evidence}</p>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     );
   };
@@ -427,14 +686,53 @@ export default function SecurityAnalyzer() {
         </Card>
       </div>
 
-      <Tabs defaultValue="coverage">
+      <div className="grid gap-4 md:grid-cols-2">
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Known Principals</CardTitle>
+            <UserRound className="h-4 w-4 text-primary" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-foreground">{principalsWithAccess}</div>
+            <p className="text-xs text-muted-foreground">People or service accounts seen in access signals</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">High-Risk Access</CardTitle>
+            <KeyRound className="h-4 w-4 text-destructive" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-destructive">{highRiskAccess}</div>
+            <p className="text-xs text-muted-foreground">Owner, admin, IAM policy, or key-management access signals</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      <Tabs defaultValue="access">
         <TabsList>
+          <TabsTrigger value="access">Who Has Access</TabsTrigger>
           <TabsTrigger value="coverage">Coverage</TabsTrigger>
           <TabsTrigger value="iam">IAM & Access</TabsTrigger>
           <TabsTrigger value="storage">Storage</TabsTrigger>
           <TabsTrigger value="network">Network</TabsTrigger>
           <TabsTrigger value="certificates">Certificates</TabsTrigger>
         </TabsList>
+
+        <TabsContent value="access" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle>Who Has What Access</CardTitle>
+              <CardDescription>
+                Principal-to-role and principal-to-permission inventory inferred from policy deltas, authorization logs, and resource creation records.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {renderAccessInventory()}
+            </CardContent>
+          </Card>
+        </TabsContent>
 
         <TabsContent value="coverage" className="space-y-4">
           <Card>
