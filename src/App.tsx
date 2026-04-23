@@ -16,6 +16,7 @@ import PluginMarketplace from "./pages/PluginMarketplace";
 import RepoGraph from "./pages/RepoGraph";
 import ProjectConnector from "./pages/ProjectConnector";
 import ResourceDiscovery from "./pages/ResourceDiscovery";
+import { ProjectProvider } from "./context/ProjectContext";
 import NotFound from "./pages/NotFound";
 // Labs — hidden from nav, still accessible via direct URL
 import TerraformGenerator from "./pages/TerraformGenerator";
@@ -27,6 +28,7 @@ const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
+    <ProjectProvider>
     <TooltipProvider>
       <Toaster />
       <Sonner />
@@ -55,6 +57,7 @@ const App = () => (
         </Layout>
       </BrowserRouter>
     </TooltipProvider>
+    </ProjectProvider>
   </QueryClientProvider>
 );
 

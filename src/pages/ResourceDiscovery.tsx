@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -40,8 +41,10 @@ import {
   Filter,
   Layers,
   CheckSquare,
+  Link2,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useProjects } from "@/context/ProjectContext";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -277,11 +280,23 @@ function ResourceRow({
 // ─── Main page component ──────────────────────────────────────────────────────
 
 export default function ResourceDiscovery() {
+  const navigate = useNavigate();
+  const { projects, updateResourceCount } = useProjects();
+
   const [resources, setResources] = useState<GCPResource[]>([]);
   const [scanning, setScanning] = useState(false);
   const [scanProgress, setScanProgress] = useState(0);
-  const [selectedProject, setSelectedProject] = useState("my-prod-project-123456");
+  const [selectedProjectId, setSelectedProjectId] = useState("");
   const [search, setSearch] = useState("");
+
+  // Auto-select first connected project when the list loads or changes
+  useEffect(() => {
+    if (projects.length > 0 && !selectedProjectId) {
+      setSelectedProjectId(projects[0].projectId);
+    }
+  }, [projects, selectedProjectId]);
+
+  const selectedProject = projects.find((p) => p.projectId === selectedProjectId);
   const [filterType, setFilterType] = useState<ResourceType | "all">("all");
   const [filterAction, setFilterAction] = useState<ResourceAction | "all">("all");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -325,6 +340,7 @@ export default function ResourceDiscovery() {
   // ── Scan simulation ──
 
   const handleScan = async () => {
+    if (!selectedProject) return;
     setScanning(true);
     setScanProgress(0);
     setResources([]);
@@ -336,10 +352,12 @@ export default function ResourceDiscovery() {
       await new Promise((r) => setTimeout(r, 400));
       setScanProgress(p);
     }
-    setResources(MOCK_RESOURCES.map((r) => ({ ...r, action: "untagged", approvalStatus: "pending" })));
+    const discovered = MOCK_RESOURCES.map((r) => ({ ...r, action: "untagged" as ResourceAction, approvalStatus: "pending" as ApprovalStatus }));
+    setResources(discovered);
+    updateResourceCount(selectedProject.id, discovered.length);
     setScanning(false);
     setActiveTab("all");
-    toast.success(`Discovered ${MOCK_RESOURCES.length} resources in ${selectedProject}`);
+    toast.success(`Discovered ${discovered.length} resources in ${selectedProject.projectId}`);
   };
 
   // ── Per-resource action ──
@@ -392,7 +410,7 @@ export default function ResourceDiscovery() {
     );
     setApproving(false);
     setApprovalDone(true);
-    toast.success(`${total} resource(s) have been deleted from ${selectedProject}`);
+    toast.success(`${total} resource(s) have been deleted from ${selectedProject?.projectId}`);
   };
 
   const closeApproval = () => {
@@ -403,6 +421,32 @@ export default function ResourceDiscovery() {
   };
 
   // ─────────────────────────────────────────────────────────────────────────────
+
+  // No projects connected at all — prompt to connect one
+  if (projects.length === 0) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-3xl font-bold text-foreground">Resource Discovery</h1>
+          <p className="mt-1 text-muted-foreground">
+            Scan your GCP project, review resources, and approve deletions with a controlled workflow.
+          </p>
+        </div>
+        <Card>
+          <CardContent className="flex flex-col items-center justify-center py-24 text-center">
+            <Layers className="mb-4 h-14 w-14 text-muted-foreground/20" />
+            <p className="text-xl font-semibold text-foreground">No projects connected</p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              Connect a GCP project first using a service account and project ID, then come back here to scan.
+            </p>
+            <Button className="mt-6 gap-2" onClick={() => navigate("/connect-project")}>
+              <Link2 className="h-4 w-4" /> Connect a Project
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -415,16 +459,20 @@ export default function ResourceDiscovery() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Select value={selectedProject} onValueChange={setSelectedProject}>
-            <SelectTrigger className="w-56">
-              <SelectValue />
+          <Select value={selectedProjectId} onValueChange={(v) => { setSelectedProjectId(v); setResources([]); }}>
+            <SelectTrigger className="w-64">
+              <SelectValue placeholder="Select a project" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="my-prod-project-123456">my-prod-project-123456</SelectItem>
-              <SelectItem value="staging-project-789">staging-project-789</SelectItem>
+              {projects.map((p) => (
+                <SelectItem key={p.id} value={p.projectId}>
+                  <span className="font-medium">{p.displayName}</span>
+                  <span className="ml-2 font-mono text-xs text-muted-foreground">{p.projectId}</span>
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
-          <Button onClick={handleScan} disabled={scanning} className="gap-2">
+          <Button onClick={handleScan} disabled={scanning || !selectedProject} className="gap-2">
             {scanning ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin" /> Scanning…
@@ -443,7 +491,9 @@ export default function ResourceDiscovery() {
         <Card>
           <CardContent className="pt-6 pb-5">
             <div className="flex items-center justify-between text-sm mb-2">
-              <span className="text-muted-foreground">Scanning {selectedProject}…</span>
+              <span className="text-muted-foreground">
+                Scanning <strong>{selectedProject?.projectId}</strong>…
+              </span>
               <span className="font-mono font-medium">{scanProgress}%</span>
             </div>
             <Progress value={scanProgress} className="h-2" />
@@ -454,14 +504,15 @@ export default function ResourceDiscovery() {
         </Card>
       )}
 
-      {/* Empty state */}
+      {/* Empty state — project selected but not yet scanned */}
       {!scanning && resources.length === 0 && (
         <Card>
           <CardContent className="flex flex-col items-center justify-center py-20 text-center">
             <Layers className="mb-4 h-12 w-12 text-muted-foreground/30" />
-            <p className="text-lg font-semibold text-foreground">No resources discovered yet</p>
+            <p className="text-lg font-semibold text-foreground">Ready to scan</p>
             <p className="mt-1 text-sm text-muted-foreground">
-              Select a connected project and click <strong>Start Scan</strong> to discover all GCP resources.
+              Project <strong>{selectedProject?.displayName}</strong> is connected. Click{" "}
+              <strong>Start Scan</strong> to discover all GCP resources.
             </p>
           </CardContent>
         </Card>
@@ -648,7 +699,7 @@ export default function ResourceDiscovery() {
             </DialogTitle>
             <DialogDescription>
               Review the resources below. Once approved, they will be permanently deleted from{" "}
-              <strong>{selectedProject}</strong>. This action cannot be undone.
+              <strong>{selectedProject?.projectId}</strong>. This action cannot be undone.
             </DialogDescription>
           </DialogHeader>
 
@@ -720,7 +771,7 @@ export default function ResourceDiscovery() {
                 <p className="text-xl font-semibold text-foreground">Deletion Complete</p>
                 <p className="mt-1 text-sm text-muted-foreground">
                   All approved resources have been successfully deleted from{" "}
-                  <strong>{selectedProject}</strong>.
+                  <strong>{selectedProject?.projectId}</strong>.
                 </p>
                 <p className="mt-3 text-sm font-medium text-green-600 dark:text-green-400">
                   Estimated savings: ${totalDeleteCost.toFixed(2)}/month

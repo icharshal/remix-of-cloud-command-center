@@ -23,15 +23,7 @@ import {
   ShieldCheck,
 } from "lucide-react";
 import { toast } from "sonner";
-
-interface ConnectedProject {
-  id: string;
-  projectId: string;
-  displayName: string;
-  connectedAt: string;
-  status: "connected" | "error";
-  resourceCount: number;
-}
+import { useProjects } from "@/context/ProjectContext";
 
 const REQUIRED_ROLES = [
   { role: "roles/viewer", desc: "Read access to all project resources" },
@@ -43,26 +35,16 @@ const REQUIRED_ROLES = [
   { role: "roles/iam.securityReviewer", desc: "IAM policy inspection" },
 ];
 
-const INITIAL_PROJECTS: ConnectedProject[] = [
-  {
-    id: "demo-1",
-    projectId: "my-prod-project-123456",
-    displayName: "Production GCP Project",
-    connectedAt: "2026-04-20T10:30:00Z",
-    status: "connected",
-    resourceCount: 47,
-  },
-];
-
 export default function ProjectConnector() {
   const navigate = useNavigate();
+  const { projects, addProject, removeProject } = useProjects();
+
   const [projectId, setProjectId] = useState("");
   const [serviceAccountJson, setServiceAccountJson] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [testing, setTesting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<"idle" | "success" | "error">("idle");
-  const [connectedProjects, setConnectedProjects] = useState<ConnectedProject[]>(INITIAL_PROJECTS);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -84,22 +66,14 @@ export default function ProjectConnector() {
   };
 
   const handleTestConnection = async () => {
-    if (!projectId.trim()) {
-      toast.error("Enter a GCP Project ID");
-      return;
-    }
-    if (!serviceAccountJson.trim()) {
-      toast.error("Provide a service account JSON key");
-      return;
-    }
+    if (!projectId.trim()) { toast.error("Enter a GCP Project ID"); return; }
+    if (!serviceAccountJson.trim()) { toast.error("Provide a service account JSON key"); return; }
     setTesting(true);
     setConnectionStatus("idle");
     await new Promise((r) => setTimeout(r, 2200));
     try {
       const parsed = JSON.parse(serviceAccountJson);
-      if (!parsed.type || parsed.type !== "service_account") {
-        throw new Error("Not a service account key");
-      }
+      if (!parsed.type || parsed.type !== "service_account") throw new Error("Not a service account key");
       setConnectionStatus("success");
       if (parsed.project_id && !projectId) setProjectId(parsed.project_id);
       toast.success("Connection verified — project is accessible");
@@ -111,21 +85,17 @@ export default function ProjectConnector() {
   };
 
   const handleSaveProject = async () => {
-    if (connectionStatus !== "success") {
-      toast.error("Test the connection first");
-      return;
-    }
+    if (connectionStatus !== "success") { toast.error("Test the connection first"); return; }
     setSaving(true);
     await new Promise((r) => setTimeout(r, 1200));
-    const newProject: ConnectedProject = {
+    addProject({
       id: `proj-${Date.now()}`,
       projectId: projectId.trim(),
       displayName: displayName.trim() || projectId.trim(),
       connectedAt: new Date().toISOString(),
       status: "connected",
       resourceCount: 0,
-    };
-    setConnectedProjects((prev) => [...prev, newProject]);
+    });
     setProjectId("");
     setServiceAccountJson("");
     setDisplayName("");
@@ -135,13 +105,12 @@ export default function ProjectConnector() {
   };
 
   const handleRemoveProject = (id: string) => {
-    setConnectedProjects((prev) => prev.filter((p) => p.id !== id));
+    removeProject(id);
     toast.info("Project disconnected");
   };
 
   return (
     <div className="space-y-8">
-      {/* Header */}
       <div>
         <h1 className="text-3xl font-bold text-foreground">Connect GCP Project</h1>
         <p className="mt-1 text-muted-foreground">
@@ -149,7 +118,6 @@ export default function ProjectConnector() {
         </p>
       </div>
 
-      {/* Form + Permissions side-by-side */}
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Connection Form */}
         <Card>
@@ -181,10 +149,7 @@ export default function ProjectConnector() {
                 id="project-id"
                 placeholder="e.g. my-project-123456"
                 value={projectId}
-                onChange={(e) => {
-                  setProjectId(e.target.value);
-                  setConnectionStatus("idle");
-                }}
+                onChange={(e) => { setProjectId(e.target.value); setConnectionStatus("idle"); }}
               />
             </div>
 
@@ -202,10 +167,7 @@ export default function ProjectConnector() {
                 placeholder={'{ "type": "service_account", "project_id": "...", ... }'}
                 rows={7}
                 value={serviceAccountJson}
-                onChange={(e) => {
-                  setServiceAccountJson(e.target.value);
-                  setConnectionStatus("idle");
-                }}
+                onChange={(e) => { setServiceAccountJson(e.target.value); setConnectionStatus("idle"); }}
                 className="font-mono text-xs"
               />
             </div>
@@ -234,30 +196,14 @@ export default function ProjectConnector() {
                 disabled={testing || !projectId || !serviceAccountJson}
                 className="flex-1"
               >
-                {testing ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Testing…
-                  </>
-                ) : (
-                  <>
-                    <Link2 className="mr-2 h-4 w-4" /> Test Connection
-                  </>
-                )}
+                {testing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Testing…</> : <><Link2 className="mr-2 h-4 w-4" /> Test Connection</>}
               </Button>
               <Button
                 onClick={handleSaveProject}
                 disabled={saving || connectionStatus !== "success"}
                 className="flex-1"
               >
-                {saving ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Connecting…
-                  </>
-                ) : (
-                  <>
-                    <Plus className="mr-2 h-4 w-4" /> Connect Project
-                  </>
-                )}
+                {saving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Connecting…</> : <><Plus className="mr-2 h-4 w-4" /> Connect Project</>}
               </Button>
             </div>
           </CardContent>
@@ -270,16 +216,11 @@ export default function ProjectConnector() {
               <ShieldCheck className="h-5 w-5 text-amber-500" />
               Required IAM Roles
             </CardTitle>
-            <CardDescription>
-              Assign these roles to the service account before connecting.
-            </CardDescription>
+            <CardDescription>Assign these roles to the service account before connecting.</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
             {REQUIRED_ROLES.map(({ role, desc }) => (
-              <div
-                key={role}
-                className="flex items-start gap-3 rounded-md border border-border bg-card p-3"
-              >
+              <div key={role} className="flex items-start gap-3 rounded-md border border-border bg-card p-3">
                 <CheckCircle className="mt-0.5 h-4 w-4 shrink-0 text-green-500" />
                 <div>
                   <p className="font-mono text-xs font-semibold text-foreground">{role}</p>
@@ -301,27 +242,23 @@ export default function ProjectConnector() {
       {/* Connected Projects List */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="flex items-center gap-2">
-                <Building2 className="h-5 w-5 text-primary" />
-                Connected Projects
-              </CardTitle>
-              <CardDescription>
-                {connectedProjects.length} project{connectedProjects.length !== 1 ? "s" : ""} connected
-              </CardDescription>
-            </div>
-          </div>
+          <CardTitle className="flex items-center gap-2">
+            <Building2 className="h-5 w-5 text-primary" />
+            Connected Projects
+          </CardTitle>
+          <CardDescription>
+            {projects.length} project{projects.length !== 1 ? "s" : ""} connected
+          </CardDescription>
         </CardHeader>
         <CardContent>
-          {connectedProjects.length === 0 ? (
+          {projects.length === 0 ? (
             <div className="py-12 text-center text-muted-foreground">
               <Cloud className="mx-auto mb-3 h-10 w-10 opacity-20" />
               <p className="text-sm">No projects connected yet. Add one above.</p>
             </div>
           ) : (
             <div className="space-y-3">
-              {connectedProjects.map((project) => (
+              {projects.map((project) => (
                 <div
                   key={project.id}
                   className="flex items-center justify-between rounded-lg border border-border p-4 transition-colors hover:bg-secondary/30"
