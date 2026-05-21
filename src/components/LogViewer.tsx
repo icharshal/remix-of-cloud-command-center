@@ -34,6 +34,11 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { format } from "date-fns";
 
 interface CollectedLog {
@@ -596,21 +601,32 @@ export default function LogViewer() {
               </CardDescription>
             </div>
             <div className="flex items-center gap-2">
-              <Button
-                variant={autoScroll ? "default" : "outline"}
-                size="sm"
-                className="gap-2"
-                onClick={() => {
-                  setAutoScroll(!autoScroll);
-                  if (!autoScroll) {
-                    scrollToTop();
-                    setNewLogsCount(0);
-                  }
-                }}
-              >
-                <ArrowDown className={`h-4 w-4 ${autoScroll ? '' : 'opacity-50'}`} />
-                Auto-scroll {autoScroll ? 'On' : 'Off'}
-              </Button>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={autoScroll ? "default" : "outline"}
+                    size="sm"
+                    className="gap-2"
+                    onClick={() => {
+                      setAutoScroll(!autoScroll);
+                      if (!autoScroll) {
+                        scrollToTop();
+                        setNewLogsCount(0);
+                      }
+                    }}
+                    aria-label={autoScroll ? "Disable auto-scroll" : "Enable auto-scroll"}
+                  >
+                    <ArrowDown className={`h-4 w-4 ${autoScroll ? '' : 'opacity-50'}`} />
+                    Auto-scroll {autoScroll ? 'On' : 'Off'}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Automatically scroll to newest logs.</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Auto-scroll is paused if you scroll up manually.
+                  </p>
+                </TooltipContent>
+              </Tooltip>
             </div>
           </div>
         </CardHeader>
